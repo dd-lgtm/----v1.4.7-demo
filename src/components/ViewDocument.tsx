@@ -611,7 +611,7 @@ const ViewDocument: React.FC = () => {
             >
               {/* Tabs (sticky at top of annotation column) */}
               <div ref={stickyTabsRef} style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#FFFFFF', position: 'sticky', top: 0, zIndex: 15 }}>
-                <div style={{ display: 'flex', flexDirection: 'column', padding: '16px 24px 0', gap: '10px', borderBottom: '1px solid #E5E5E5' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', padding: '16px 24px 0', gap: '10px', borderBottom: activeTab === '批注' ? '1px solid #E5E5E5' : 'none' }}>
                   <div style={{ display: 'flex', padding: '2px', gap: '2px', backgroundColor: '#F5F5F5', borderRadius: '8px' }}>
                     <div
                       onClick={() => setActiveTab('批注')}
