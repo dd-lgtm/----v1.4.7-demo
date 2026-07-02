@@ -1,5 +1,6 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import Department from './Department'
+import AddAnno from './AddAnno'
 
 type StatusVariant = 'accept' | 'refuse' | 'addComment'
 
@@ -9,6 +10,9 @@ interface StatusProps {
   userName?: string
   time?: string
   content?: string
+  isEditing?: boolean
+  onEdit?: (text: string) => void
+  onEditCancel?: () => void
 }
 
 const Status: React.FC<StatusProps> = ({
@@ -17,7 +21,16 @@ const Status: React.FC<StatusProps> = ({
   userName = '段威丞',
   time = '06-24 14:32',
   content = '',
+  isEditing: externalEditing,
+  onEdit,
+  onEditCancel,
 }) => {
+  const [isEditing, setIsEditing] = useState(false)
+
+  // Sync external editing trigger
+  useEffect(() => {
+    if (externalEditing) setIsEditing(true)
+  }, [externalEditing])
   if (variant === 'accept') {
     return (
       <div
@@ -93,6 +106,7 @@ const Status: React.FC<StatusProps> = ({
   // addComment
   return (
     <div
+      onClick={(e) => { if (isEditing) e.stopPropagation() }}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -112,16 +126,33 @@ const Status: React.FC<StatusProps> = ({
         </div>
         <span style={{ fontSize: '12px', color: '#999999' }}>{time}</span>
       </div>
-      <div
-        style={{
-          fontSize: '14px',
-          lineHeight: '1.5em',
-          color: '#333333',
-          fontFamily: "'PingFang SC', sans-serif",
-        }}
-      >
-        {content || '该图片用于印刷物料，需确保分辨率达300dpi，已联系设计师处理，预计明日更新。'}
-      </div>
+      {isEditing ? (
+        <AddAnno
+          variant="adding"
+          initialText={content || '该图片用于印刷物料，需确保分辨率达300dpi，已联系设计师处理，预计明日更新。'}
+          onSubmit={(text) => {
+            setIsEditing(false)
+            onEdit?.(text)
+          }}
+          onCancel={() => {
+            setIsEditing(false)
+            onEditCancel?.()
+          }}
+        />
+      ) : (
+        <div
+          onClick={(e) => { e.stopPropagation(); setIsEditing(true) }}
+          style={{
+            fontSize: '14px',
+            lineHeight: '1.5em',
+            color: '#333333',
+            fontFamily: "'PingFang SC', sans-serif",
+            cursor: 'text',
+          }}
+        >
+          {content || '该图片用于印刷物料，需确保分辨率达300dpi，已联系设计师处理，预计明日更新。'}
+        </div>
+      )}
     </div>
   )
 }
