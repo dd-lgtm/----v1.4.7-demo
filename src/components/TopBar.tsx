@@ -1,4 +1,5 @@
 import React from 'react'
+import { useNavigate } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import Tag from './Tag'
 import Button from './Button'
@@ -60,6 +61,8 @@ const TopBar: React.FC<TopBarProps> = ({
   category = 'Internal use',
   product = 'XXX',
 }) => {
+  const navigate = useNavigate()
+
   return (
     <div
       style={{
@@ -78,7 +81,7 @@ const TopBar: React.FC<TopBarProps> = ({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         {/* Left: Back + Title */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <ArrowLeft size={24} color="#333333" />
+          <ArrowLeft size={24} color="#333333" style={{ cursor: 'pointer' }} onClick={() => navigate('/workbench')} />
           <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '2px', width: '395px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '16px', fontWeight: 600, color: '#333333', fontFamily: "'PingFang SC', sans-serif" }}>

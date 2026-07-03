@@ -1,9 +1,17 @@
 import React from 'react'
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import ViewDocument from './components/ViewDocument'
+import Workbench from './components/Workbench'
 
 const App: React.FC = () => {
   return (
-    <ViewDocument />
+    <HashRouter>
+      <Routes>
+        <Route path="/workbench" element={<Workbench />} />
+        <Route path="/document" element={<ViewDocument />} />
+        <Route path="*" element={<Navigate to="/workbench" replace />} />
+      </Routes>
+    </HashRouter>
   )
 }
 

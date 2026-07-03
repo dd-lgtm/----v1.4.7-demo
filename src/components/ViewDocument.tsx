@@ -3,6 +3,7 @@ import TopBar from './TopBar'
 import Annotation from './Annotation'
 import VersionCard from './VersionCard'
 import AddAnno from './AddAnno'
+import { resolveCardPositions, type CardRect } from '../utils/collisionResolver'
 
 // ─── Data Model ───────────────────────────────────────────
 interface AnnotationData {
@@ -33,13 +34,13 @@ const PAGE_WIDTH = 680
 const PAGE_HEIGHT = 900
 const PAGE_GAP = 24
 const COLUMN_PADDING_TOP = 32
-const CARD_GAP = 4
+const PDF_TOOLBAR_HEIGHT = 50
 
-// ─── Estimated card heights for collision resolution ────
+// ─── Fallback card heights (used before DOM measurement) ────
 function estimateCardHeight(anno: AnnotationData): number {
   return anno.type === 'AI' ? 150 : 90
 }
-const ADD_ANNO_HEIGHT = 48
+const ADD_ANNO_HEIGHT = 42
 
 // ─── Mock PDF Pages ───────────────────────────────────────
 interface ContentBlock {
@@ -207,10 +208,18 @@ const ViewDocument: React.FC = () => {
   const isDraggingRef = useRef(false)
   const dragStartRef = useRef<{ page: number; x: number; y: number } | null>(null)
 
-  // ── Dashed line coords ──
-  const [dashedLine, setDashedLine] = useState<{
+  // ── Scroll position tracker (for nav button state) ──
+  const [scrollTop, setScrollTop] = useState(0)
+
+  // ── Card height tracking (actual DOM measurements) ──
+  const [cardHeights, setCardHeights] = useState<Record<string, number>>({})
+  const cardHeightsRef = useRef<Record<string, number>>({})
+  const cardsContainerRef = useRef<HTMLDivElement>(null)
+
+  // ── Dashed line coords (one per visible annotation) ──
+  const [dashedLines, setDashedLines] = useState<Record<string, {
     x1: number; y1: number; x2: number; y2: number
-  } | null>(null)
+  }>>({})
 
   // ── PDF column height for annotation alignment ──
   const [pdfColumnHeight, setPdfColumnHeight] = useState(0)
@@ -233,39 +242,34 @@ const ViewDocument: React.FC = () => {
     return () => ro.disconnect()
   }, [])
 
-  // ── Update dashed line ──
-  const updateDashedLine = useCallback(() => {
-    if (!activeAnnotation || !mainContentRef.current) {
-      setDashedLine(null)
-      return
-    }
-
-    const hlEl = highlightRefs.current[activeAnnotation]
-    const cardEl = annoCardRefs.current[activeAnnotation]
-    const container = mainContentRef.current
-    if (!hlEl || !cardEl || !container) { setDashedLine(null); return }
-
-    const hlRect = hlEl.getBoundingClientRect()
-    const cardRect = cardEl.getBoundingClientRect()
-    const containerRect = container.getBoundingClientRect()
-
-    setDashedLine({
-      x1: hlRect.right - containerRect.left,
-      y1: hlRect.top + hlRect.height / 2 - containerRect.top,
-      x2: cardRect.left - containerRect.left,
-      y2: cardRect.top + cardRect.height / 2 - containerRect.top,
+  // ── ResizeObserver: track actual card heights for collision resolution ──
+  useEffect(() => {
+    const ro = new ResizeObserver((entries) => {
+      let changed = false
+      entries.forEach(entry => {
+        const el = entry.target as HTMLElement
+        const id = el.dataset.cardId
+        if (!id) return
+        const h = el.offsetHeight
+        if (cardHeightsRef.current[id] !== h) {
+          cardHeightsRef.current = { ...cardHeightsRef.current, [id]: h }
+          changed = true
+        }
+      })
+      if (changed) {
+        setCardHeights({ ...cardHeightsRef.current })
+      }
     })
-  }, [activeAnnotation])
 
-  useEffect(() => {
-    updateDashedLine()
-  }, [activeAnnotation, updateDashedLine, pdfColumnHeight])
+    // Observe all card wrapper elements
+    Object.values(annoCardRefs.current).forEach(el => {
+      if (el) ro.observe(el)
+    })
 
-  useEffect(() => {
-    const handler = () => updateDashedLine()
-    window.addEventListener('resize', handler)
-    return () => window.removeEventListener('resize', handler)
-  }, [updateDashedLine])
+    return () => ro.disconnect()
+  }, [annotations, isAddingAnno])
+
+  // (updateDashedLines defined after filteredAnnotations)
 
   // ── Mouse selection handlers ──
   const handlePdfMouseDown = useCallback((e: React.MouseEvent) => {
@@ -380,49 +384,79 @@ const ViewDocument: React.FC = () => {
   }, [])
 
   // ── Filter annotations by sub-tab ──
-  const filteredAnnotations = annotations.filter(a => {
+  const filteredAnnotations = useMemo(() => annotations.filter(a => {
     if (activeSubTab === 'AI') return a.type === 'AI'
     if (activeSubTab === '人工') return a.type === 'manual'
     return true
-  })
+  }), [annotations, activeSubTab])
 
-  // ── Collision resolution: compute non-overlapping card positions ──
-  const resolvedCardTops = useMemo(() => {
-    type CardItem = { id: string; naturalTop: number; height: number }
-    const cards: CardItem[] = []
+  // ── Update all dashed lines (one per visible annotation) ──
+  const updateDashedLines = useCallback(() => {
+    const container = sharedScrollRef.current
+    if (!container) { setDashedLines({}); return }
 
-    // Annotation cards
+    const containerRect = container.getBoundingClientRect()
+    const scrollTop = container.scrollTop
+    const lines: Record<string, { x1: number; y1: number; x2: number; y2: number }> = {}
+
     filteredAnnotations.forEach(anno => {
-      const hlCenterY = getPageTop(anno.page) + anno.rect.y + anno.rect.height / 2 + COLUMN_PADDING_TOP - tabsHeight
-      cards.push({ id: anno.id, naturalTop: hlCenterY, height: estimateCardHeight(anno) })
+      const hlEl = highlightRefs.current[anno.id]
+      const cardEl = annoCardRefs.current[anno.id]
+      if (!hlEl || !cardEl) return
+
+      const hlRect = hlEl.getBoundingClientRect()
+      const cardRect = cardEl.getBoundingClientRect()
+
+      // Only draw if both elements are at least partially visible
+      if (hlRect.bottom < containerRect.top || hlRect.top > containerRect.bottom) return
+      if (cardRect.bottom < containerRect.top || cardRect.top > containerRect.bottom) return
+
+      lines[anno.id] = {
+        x1: hlRect.right - containerRect.left,
+        y1: hlRect.top + hlRect.height / 2 - containerRect.top + scrollTop,
+        x2: cardRect.left - containerRect.left,
+        y2: cardRect.top + cardRect.height / 2 - containerRect.top + scrollTop,
+      }
     })
 
-    // AddAnno card
+    setDashedLines(lines)
+  }, [filteredAnnotations])
+
+  useEffect(() => {
+    updateDashedLines()
+  }, [updateDashedLines, pdfColumnHeight, activeAnnotation, cardHeights])
+
+  useEffect(() => {
+    const handler = () => updateDashedLines()
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [updateDashedLines])
+
+  // ── Collision resolution: compute non-overlapping card positions using actual heights ──
+  const resolvedCardTops = useMemo(() => {
+    const cards: CardRect[] = []
+
+    // Annotation cards: compute natural top position
+    // PDF column abs origin is at toolbarHeight below wrapper; cards container abs origin is at tabsHeight below wrapper
+    // So card top in cards-container space = highlight center + PDF_TOOLBAR_HEIGHT - tabsHeight - padding_offset
+    filteredAnnotations.forEach(anno => {
+      const hlCenterY = getPageTop(anno.page) + anno.rect.y + anno.rect.height / 2 + COLUMN_PADDING_TOP + PDF_TOOLBAR_HEIGHT - tabsHeight
+      const height = cardHeights[anno.id] ?? estimateCardHeight(anno)
+      cards.push({ id: anno.id, top: hlCenterY - height / 2 - 12, height })
+    })
+
+    // AddAnno card — positioned to align with selection rect center in PDF column
     if (isAddingAnno && pendingSelection) {
       const selCenterY = getPageTop(pendingSelection.page)
         + (pendingSelection.startY + pendingSelection.endY) / 2
-        + COLUMN_PADDING_TOP - tabsHeight
-      cards.push({ id: '__addAnno__', naturalTop: selCenterY, height: ADD_ANNO_HEIGHT })
+        + COLUMN_PADDING_TOP + PDF_TOOLBAR_HEIGHT - tabsHeight
+      const height = cardHeights['__addAnno__'] ?? ADD_ANNO_HEIGHT
+      cards.push({ id: '__addAnno__', top: selCenterY - height / 2 - 12, height })
     }
 
-    // Sort by natural top position (top to bottom)
-    cards.sort((a, b) => a.naturalTop - b.naturalTop)
-
-    // Resolve overlaps: push cards downward
-    for (let i = 1; i < cards.length; i++) {
-      const prev = cards[i - 1]
-      const curr = cards[i]
-      const prevBottom = prev.naturalTop + prev.height / 2
-      const currTop = curr.naturalTop - curr.height / 2
-      if (currTop < prevBottom + CARD_GAP) {
-        curr.naturalTop = prevBottom + CARD_GAP + curr.height / 2
-      }
-    }
-
-    const map: Record<string, number> = {}
-    cards.forEach(c => { map[c.id] = c.naturalTop })
-    return map
-  }, [filteredAnnotations, tabsHeight, isAddingAnno, pendingSelection])
+    // Resolve collisions using the layout engine
+    return resolveCardPositions(cards)
+  }, [filteredAnnotations, tabsHeight, isAddingAnno, pendingSelection, cardHeights])
 
   // ── Annotation activate handler ──
   const handleActivateAnnotation = useCallback((id: string) => {
@@ -433,6 +467,64 @@ const ViewDocument: React.FC = () => {
       sharedScrollRef.current.scrollTo({ top: targetTop, behavior: 'smooth' })
     }
   }, [annotations])
+
+  // ── Sorted annotations for navigation ──
+  const sortedAnnotations = useMemo(() =>
+    [...filteredAnnotations].sort((a, b) => {
+      if (a.page !== b.page) return a.page - b.page
+      return a.rect.y - b.rect.y
+    }),
+  [filteredAnnotations])
+
+  // ── Previous / Next annotation navigation ──
+  const { prevAnno, nextAnno } = useMemo(() => {
+    if (sortedAnnotations.length === 0) return { prevAnno: null, nextAnno: null }
+
+    if (activeAnnotation) {
+      const idx = sortedAnnotations.findIndex(a => a.id === activeAnnotation)
+      if (idx === -1) return { prevAnno: null, nextAnno: null }
+      const prevIdx = (idx - 1 + sortedAnnotations.length) % sortedAnnotations.length
+      const nextIdx = (idx + 1) % sortedAnnotations.length
+      return {
+        prevAnno: sortedAnnotations[prevIdx],
+        nextAnno: sortedAnnotations[nextIdx],
+      }
+    }
+
+    // No active annotation — use scroll position
+    const container = sharedScrollRef.current
+    if (!container) return { prevAnno: sortedAnnotations[sortedAnnotations.length - 1], nextAnno: sortedAnnotations[0] }
+
+    const viewportCenter = container.scrollTop + container.clientHeight / 2
+
+    let nextIdx = sortedAnnotations.findIndex(anno => {
+      const annoCenterY = getPageTop(anno.page) + anno.rect.y + anno.rect.height / 2 + COLUMN_PADDING_TOP
+      return annoCenterY >= viewportCenter
+    })
+
+    if (nextIdx === -1) nextIdx = 0
+    if (nextIdx === 0 && sortedAnnotations.length > 0) {
+      const firstCenterY = getPageTop(sortedAnnotations[0].page) + sortedAnnotations[0].rect.y + sortedAnnotations[0].rect.height / 2 + COLUMN_PADDING_TOP
+      if (firstCenterY >= container.scrollTop) {
+        nextIdx = 1 % sortedAnnotations.length
+      }
+    }
+
+    const prevIdx = (nextIdx - 1 + sortedAnnotations.length) % sortedAnnotations.length
+    return {
+      prevAnno: sortedAnnotations[prevIdx],
+      nextAnno: sortedAnnotations[nextIdx],
+    }
+  }, [sortedAnnotations, activeAnnotation, scrollTop])
+
+  const navigateToAnnotation = useCallback((anno: AnnotationData) => {
+    if (!sharedScrollRef.current) return
+    const container = sharedScrollRef.current
+    const annoCenterY = getPageTop(anno.page) + anno.rect.y + anno.rect.height / 2 + COLUMN_PADDING_TOP
+    const targetScroll = annoCenterY - container.clientHeight / 2
+    container.scrollTo({ top: Math.max(0, targetScroll), behavior: 'smooth' })
+    setActiveAnnotation(anno.id)
+  }, [])
 
   // ═══════════════════════════════════════════════════════
   // RENDER
@@ -484,10 +576,14 @@ const ViewDocument: React.FC = () => {
         {/* ─── Center column: Shared scroll (toolbar inside as sticky) ─── */}
         <div
           ref={sharedScrollRef}
-          onScroll={updateDashedLine}
+          onScroll={(e) => {
+            updateDashedLines()
+            setScrollTop((e.currentTarget as HTMLDivElement).scrollTop)
+          }}
           onMouseMove={handlePdfMouseMove}
           onMouseUp={handlePdfMouseUp}
           style={{
+            position: 'relative',
             display: 'flex',
             flex: 1,
             overflowY: 'auto',
@@ -496,7 +592,7 @@ const ViewDocument: React.FC = () => {
           }}
         >
           {/* PDF area wrapper: toolbar + PDF pages (side by side with cards column) */}
-          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, alignSelf: 'flex-start' }}>
             {/* PDF Toolbar (sticky at top) */}
             <div
               style={{
@@ -520,6 +616,56 @@ const ViewDocument: React.FC = () => {
               <span style={{ fontSize: 13, color: '#666', cursor: 'pointer' }}>上一页</span>
               <span style={{ fontSize: 13, color: '#333' }}>1 / {mockPages.length}</span>
               <span style={{ fontSize: 13, color: '#666', cursor: 'pointer' }}>下一页</span>
+
+              {/* Spacer to push nav buttons to the right */}
+              <div style={{ flex: 1 }} />
+
+              {/* ── Annotation Navigation Buttons ── */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {/* 上一条批注 */}
+                <div
+                  onClick={() => prevAnno ? navigateToAnnotation(prevAnno) : undefined}
+                  onMouseEnter={e => { if (prevAnno) (e.currentTarget as HTMLDivElement).style.backgroundColor = '#F5F5F5' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent' }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '2px 4px',
+                    gap: 4,
+                    cursor: prevAnno ? 'pointer' : 'default',
+                    borderRadius: 4,
+                    transition: 'background-color 0.15s',
+                  }}
+                >
+                  <svg width={16} height={16} viewBox="0 0 16 16" fill="none">
+                    <path d="M11.39 9.45313L9.70902 11.3438H14.6667V12.6771H9.70902L11.39 14.5677L10.3939 15.4531L7.33337 12.0104L10.3939 8.56771L11.39 9.45313Z" fill={prevAnno ? '#333333' : '#BFBFBF'} />
+                    <path d="M14 2C14.3682 2 14.6667 2.29848 14.6667 2.66667V7.33333H13.3334V3.33333H2.66671V12.2565L3.84184 11.3333H6.00004V12.6667H4.30277L1.33337 15V2.66667C1.33337 2.29848 1.63185 2 2.00004 2H14Z" fill={prevAnno ? '#333333' : '#BFBFBF'} />
+                  </svg>
+                  <span style={{ fontSize: 12, color: prevAnno ? '#333333' : '#BFBFBF', fontFamily: "'PingFang SC', sans-serif" }}>上一条批注</span>
+                </div>
+
+                {/* 下一条批注 */}
+                <div
+                  onClick={() => nextAnno ? navigateToAnnotation(nextAnno) : undefined}
+                  onMouseEnter={e => { if (nextAnno) (e.currentTarget as HTMLDivElement).style.backgroundColor = '#F5F5F5' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent' }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '2px 4px',
+                    gap: 4,
+                    cursor: nextAnno ? 'pointer' : 'default',
+                    borderRadius: 4,
+                    transition: 'background-color 0.15s',
+                  }}
+                >
+                  <svg width={16} height={16} viewBox="0 0 16 16" fill="none">
+                    <path d="M14.6667 12.0104L11.6062 15.4531L10.6101 14.5677L12.2911 12.6771H7.33337V11.3438H12.2911L10.6101 9.45313L11.6062 8.56771L14.6667 12.0104Z" fill={nextAnno ? '#333333' : '#BFBFBF'} />
+                    <path d="M14 2C14.3682 2 14.6667 2.29848 14.6667 2.66667V7.33333H13.3334V3.33333H2.66671V12.2565L3.84184 11.3333H6.00004V12.6667H4.30277L1.33337 15V2.66667C1.33337 2.29848 1.63185 2 2.00004 2H14Z" fill={nextAnno ? '#333333' : '#BFBFBF'} />
+                  </svg>
+                  <span style={{ fontSize: 12, color: nextAnno ? '#333333' : '#BFBFBF', fontFamily: "'PingFang SC', sans-serif" }}>下一条批注</span>
+                </div>
+              </div>
             </div>
 
             {/* ── PDF pages column ── */}
@@ -603,6 +749,7 @@ const ViewDocument: React.FC = () => {
               style={{
                 width: '397px',
                 flexShrink: 0,
+                alignSelf: 'flex-start',
                 backgroundColor: '#FFFFFF',
                 borderLeft: '1px solid #E5E5E5',
                 display: 'flex',
@@ -662,10 +809,11 @@ const ViewDocument: React.FC = () => {
 
               {/* Annotation cards - absolutely positioned to align with highlights */}
               <div
+                ref={cardsContainerRef}
                 onClick={() => setActiveAnnotation('')}
                 style={{
                   position: 'relative',
-                  flex: 1,
+                  flexShrink: 0,
                   height: pdfColumnHeight > 0 ? pdfColumnHeight : undefined,
                   padding: '12px 8px',
                 }}
@@ -676,15 +824,18 @@ const ViewDocument: React.FC = () => {
                       const addAnnoTop = resolvedCardTops['__addAnno__'] ?? (
                         getPageTop(pendingSelection.page)
                         + (pendingSelection.startY + pendingSelection.endY) / 2
-                        + COLUMN_PADDING_TOP - tabsHeight
+                        + COLUMN_PADDING_TOP + PDF_TOOLBAR_HEIGHT - tabsHeight - 12
+                        - (cardHeights['__addAnno__'] ?? ADD_ANNO_HEIGHT) / 2
                       )
                       return (
-                        <div onClick={(e) => e.stopPropagation()} style={{
+                        <div
+                          data-card-id="__addAnno__"
+                          ref={el => { annoCardRefs.current['__addAnno__'] = el }}
+                          onClick={(e) => e.stopPropagation()} style={{
                           position: 'absolute',
                           top: addAnnoTop,
                           left: 8,
                           right: 8,
-                          transform: 'translateY(-50%)',
                           zIndex: 10,
                         }}>
                           <AddAnno
@@ -697,11 +848,14 @@ const ViewDocument: React.FC = () => {
                     })()}
                     {filteredAnnotations.map(anno => {
                       const cardTop = resolvedCardTops[anno.id] ?? (
-                        getPageTop(anno.page) + anno.rect.y + anno.rect.height / 2 + COLUMN_PADDING_TOP - tabsHeight
+                        getPageTop(anno.page) + anno.rect.y + anno.rect.height / 2
+                        + COLUMN_PADDING_TOP + PDF_TOOLBAR_HEIGHT - tabsHeight - 12
+                        - (cardHeights[anno.id] ?? estimateCardHeight(anno)) / 2
                       )
                       return (
                         <div
                           key={anno.id}
+                          data-card-id={anno.id}
                           ref={el => { annoCardRefs.current[anno.id] = el }}
                           onClick={(e) => e.stopPropagation()}
                           style={{
@@ -709,7 +863,6 @@ const ViewDocument: React.FC = () => {
                             top: cardTop,
                             left: 8,
                             right: 8,
-                            transform: 'translateY(-50%)',
                             zIndex: activeAnnotation === anno.id ? 6 : 1,
                           }}
                         >
@@ -743,32 +896,44 @@ const ViewDocument: React.FC = () => {
                 )}
               </div>
             </div>
-          </div>
 
-        {/* ─── SVG Dashed Line Overlay ─── */}
-        {dashedLine && (
-          <svg
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
-              pointerEvents: 'none',
-              zIndex: 20,
-            }}
-          >
-            <line
-              x1={dashedLine.x1}
-              y1={dashedLine.y1}
-              x2={dashedLine.x2}
-              y2={dashedLine.y2}
-              stroke="#2A6DE7"
-              strokeWidth={1.5}
-              strokeDasharray="6 4"
-            />
-          </svg>
-        )}
+            {/* ─── SVG Dashed Lines Overlay (all visible annotations) ─── */}
+            {Object.keys(dashedLines).length > 0 && (
+              <svg
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  pointerEvents: 'none',
+                  zIndex: 8,
+                }}
+              >
+                {filteredAnnotations.map(anno => {
+                  const line = dashedLines[anno.id]
+                  if (!line) return null
+                  const isActive = activeAnnotation === anno.id
+                  const color = anno.type === 'AI' ? '#2A6DE7' : '#45BF65'
+                  // 两段式折线：水平→转折→卡片
+                  // 转折点：距卡片左侧80px，Y轴与高亮区中心对齐
+                  const turnX = line.x2 - 80
+                  const points = `${line.x1},${line.y1} ${turnX},${line.y1} ${line.x2},${line.y2}`
+                  return (
+                    <polyline
+                      key={`dash-${anno.id}`}
+                      points={points}
+                      fill="none"
+                      stroke={color}
+                      strokeWidth={isActive ? 2 : 1.5}
+                      strokeDasharray={isActive ? "none" : "6 4"}
+                      opacity={isActive ? 1 : 0.6}
+                    />
+                  )
+                })}
+              </svg>
+            )}
+          </div>
       </div>
     </div>
   )

@@ -36,3 +36,32 @@ body {
   scrollbar-width: thin;
   scrollbar-color: #F0F0F0 transparent;
 }
+
+/* Hidden scrollbar by default; show on scroll via .scrolling class */
+.scrollbar-hidden::-webkit-scrollbar {
+  width: 0;
+  display: none;
+}
+
+.scrollbar-hidden {
+  scrollbar-width: none;
+}
+
+.scrollbar-hidden.scrolling::-webkit-scrollbar {
+  width: 4px;
+  display: block;
+}
+
+.scrollbar-hidden.scrolling::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-hidden.scrolling::-webkit-scrollbar-thumb {
+  background-color: #F0F0F0;
+  border-radius: 2px;
+}
+
+.scrollbar-hidden.scrolling {
+  scrollbar-width: thin;
+  scrollbar-color: #F0F0F0 transparent;
+}

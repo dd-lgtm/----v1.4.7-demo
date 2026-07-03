@@ -16,12 +16,23 @@ const AddAnno: React.FC<AddAnnoProps> = ({ variant = 'Add', onSubmit, onCancel, 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [isScrolling, setIsScrolling] = useState(false)
 
   useEffect(() => {
     if (isAdding && textareaRef.current) {
       textareaRef.current.focus()
     }
   }, [isAdding])
+
+  // Auto-resize textarea: fit content, max 5 lines (5 × 24px = 120px)
+  useEffect(() => {
+    const el = textareaRef.current
+    if (el) {
+      el.style.height = 'auto'
+      el.style.height = `${Math.min(el.scrollHeight, 120)}px`
+    }
+  }, [text])
 
   const handleSend = useCallback(() => {
     if (text.trim() && onSubmit) {
@@ -59,10 +70,17 @@ const AddAnno: React.FC<AddAnnoProps> = ({ variant = 'Add', onSubmit, onCancel, 
     setFocused(true)
   }, [])
 
-  // Cleanup timer
+  const handleScroll = useCallback(() => {
+    setIsScrolling(true)
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current)
+    scrollTimerRef.current = setTimeout(() => setIsScrolling(false), 800)
+  }, [])
+
+  // Cleanup timers
   useEffect(() => {
     return () => {
       if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
+      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current)
     }
   }, [])
 
@@ -86,7 +104,7 @@ const AddAnno: React.FC<AddAnnoProps> = ({ variant = 'Add', onSubmit, onCancel, 
         boxSizing: 'border-box',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'stretch', gap: '8px', flex: 1 }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '4px' }}>
             {(isAdding || focused) ? (
@@ -97,7 +115,10 @@ const AddAnno: React.FC<AddAnnoProps> = ({ variant = 'Add', onSubmit, onCancel, 
                 onKeyDown={handleKeyDown}
                 onFocus={handleFocus}
                 onBlur={handleBlur}
+                onScroll={handleScroll}
                 placeholder="正在写.."
+                rows={1}
+                className={`scrollbar-hidden${isScrolling ? ' scrolling' : ''}`}
                 style={{
                   fontSize: '12px',
                   lineHeight: '24px',
@@ -108,7 +129,9 @@ const AddAnno: React.FC<AddAnnoProps> = ({ variant = 'Add', onSubmit, onCancel, 
                   resize: 'none',
                   backgroundColor: 'transparent',
                   width: '100%',
-                  height: '24px',
+                  minHeight: '24px',
+                  maxHeight: '120px',
+                  overflowY: 'auto',
                   padding: 0,
                 }}
               />
