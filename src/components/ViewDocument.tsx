@@ -1,8 +1,10 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { DotLottieReact } from '@lottiefiles/dotlottie-react'
 import TopBar from './TopBar'
 import Annotation from './Annotation'
 import VersionCard from './VersionCard'
-import AddAnno from './AddAnno'
+import InputBox from './InputBox'
 import { resolveCardPositions, type CardRect } from '../utils/collisionResolver'
 
 // ─── Data Model ───────────────────────────────────────────
@@ -19,6 +21,7 @@ interface AnnotationData {
   issueContent?: string
   suggestionTitle?: string
   suggestionContent?: string
+  risk?: 'high' | 'medium' | 'low'
 }
 
 interface PendingSelection {
@@ -110,31 +113,36 @@ const initialAnnotations: AnnotationData[] = [
     department: 'Branding',
     time: '06-24 14:32',
     issueTitle: '问题说明',
-    issueContent: '此处图片分辨率偏低，当前尺寸为72dpi。',
+    issueContent: '图片色彩空间与印刷标准不匹配，当前为RGB模式。',
     suggestionTitle: 'AI修改建议',
-    suggestionContent: '建议更换为高清图片，建议调整至300dpi以上。',
-  },
-  {
-    id: 'manual-1',
-    type: 'manual',
-    page: 0,
-    rect: { x: 40, y: 530, width: 540, height: 56 },
-    department: 'Legal',
-    userName: '段威丞',
-    time: '06-24 14:32',
-    content: '此处图片分辨率偏低，建议更换为高清图片，当前尺寸为72dpi，建议调整至300dpi以上。',
+    suggestionContent: '建议将图片色彩空间转换为CMYK模式，以确保印刷色彩准确性。',
+    risk: 'high',
   },
   {
     id: 'ai-2',
     type: 'AI',
     page: 1,
     rect: { x: 40, y: 220, width: 500, height: 180 },
-    department: 'Branding',
-    time: '06-24 14:32',
+    department: 'Legal',
+    time: '06-24 15:10',
     issueTitle: '问题说明',
-    issueContent: '此处图片尺寸与版面不匹配，建议调整比例。',
+    issueContent: '页面底部版权声明字体过小，不符合合规要求。',
     suggestionTitle: 'AI修改建议',
-    suggestionContent: '建议将图片宽度调整为页面宽度的70%。',
+    suggestionContent: '建议将版权声明字号从6pt调整为8pt，确保文字清晰可读。',
+    risk: 'medium',
+  },
+  {
+    id: 'ai-3',
+    type: 'AI',
+    page: 0,
+    rect: { x: 40, y: 560, width: 460, height: 160 },
+    department: 'RA',
+    time: '06-24 15:38',
+    issueTitle: '问题说明',
+    issueContent: '产品描述中“疗效显著”用词可能涉及广告法合规风险。',
+    suggestionTitle: 'AI修改建议',
+    suggestionContent: '建议将“疗效显著”修改为“经临床验证”，以符合广告法相关规定。',
+    risk: 'low',
   },
 ]
 
@@ -152,7 +160,7 @@ const MockPage: React.FC<{ blocks: ContentBlock[]; pageIndex: number }> = ({ blo
       backgroundColor: '#FFFFFF',
       position: 'relative',
       flexShrink: 0,
-      boxShadow: '0px 1px 4px rgba(0,0,0,0.08)',
+      boxShadow: '1px 2px 4px 0px rgba(0,0,0,0.08), 0px 3px 8px 0px rgba(0,0,0,0.05)',
       margin: '0 auto',
     }}
   >
@@ -187,12 +195,20 @@ const MockPage: React.FC<{ blocks: ContentBlock[]; pageIndex: number }> = ({ blo
 
 // ═══════════════════════════════════════════════════════════
 const ViewDocument: React.FC = () => {
+  const [searchParams] = useSearchParams()
+  const docStatus = (searchParams.get('status') || '人工审核中') as string
+  const docSource = (searchParams.get('source') || 'review') as string
+  const isAIReviewing = docStatus === 'AI审核中'
+  const isReadOnly = docSource === 'created'
+
   // ── Tabs ──
   const [activeTab, setActiveTab] = useState<'批注' | '历史版本'>('批注')
-  const [activeSubTab, setActiveSubTab] = useState<'全部' | 'AI' | '人工'>('全部')
+  const [activeSubTab, setActiveSubTab] = useState<'全部' | 'AI' | '人工' | '本部门'>('全部')
 
   // ── Annotations ──
-  const [annotations, setAnnotations] = useState<AnnotationData[]>(initialAnnotations)
+  const [annotations, setAnnotations] = useState<AnnotationData[]>(
+    isAIReviewing ? [] : initialAnnotations
+  )
   const [activeAnnotation, setActiveAnnotation] = useState<string>('')
 
   // ── Pending selection (box-select to add) ──
@@ -220,6 +236,11 @@ const ViewDocument: React.FC = () => {
   const [dashedLines, setDashedLines] = useState<Record<string, {
     x1: number; y1: number; x2: number; y2: number
   }>>({})
+
+  // ── Dashed line for pending selection → InputBox ──
+  const [pendingDashedLine, setPendingDashedLine] = useState<{
+    x1: number; y1: number; x2: number; y2: number
+  } | null>(null)
 
   // ── PDF column height for annotation alignment ──
   const [pdfColumnHeight, setPdfColumnHeight] = useState(0)
@@ -273,6 +294,7 @@ const ViewDocument: React.FC = () => {
 
   // ── Mouse selection handlers ──
   const handlePdfMouseDown = useCallback((e: React.MouseEvent) => {
+    if (isReadOnly) return
     if (e.button !== 0) return
     const pdfEl = pdfColumnRef.current
     if (!pdfEl) return
@@ -301,7 +323,7 @@ const ViewDocument: React.FC = () => {
     setIsAddingAnno(false)
     setPendingSelection(null)
     setActiveAnnotation('')
-  }, [])
+  }, [isReadOnly])
 
   const handlePdfMouseMove = useCallback((e: React.MouseEvent) => {
     if (!isDraggingRef.current || !dragStartRef.current) return
@@ -387,6 +409,7 @@ const ViewDocument: React.FC = () => {
   const filteredAnnotations = useMemo(() => annotations.filter(a => {
     if (activeSubTab === 'AI') return a.type === 'AI'
     if (activeSubTab === '人工') return a.type === 'manual'
+    if (activeSubTab === '本部门') return a.department === 'Branding'
     return true
   }), [annotations, activeSubTab])
 
@@ -432,6 +455,42 @@ const ViewDocument: React.FC = () => {
     return () => window.removeEventListener('resize', handler)
   }, [updateDashedLines])
 
+  // ── Compute dashed line from pending selection highlight to InputBox card ──
+  useEffect(() => {
+    if (!isAddingAnno || !pendingSelection) {
+      setPendingDashedLine(null)
+      return
+    }
+    const computeLine = () => {
+      const container = sharedScrollRef.current
+      if (!container) return
+      const containerRect = container.getBoundingClientRect()
+      const scrollY = container.scrollTop
+
+      // Find the pending selection highlight (has no data-card-id, identified by border style)
+      const pdfCol = pdfColumnRef.current
+      if (!pdfCol) return
+      const hlEl = pdfCol.querySelector('[data-pending-highlight]') as HTMLElement | null
+      const cardEl = annoCardRefs.current['__addAnno__']
+      if (!hlEl || !cardEl) return
+
+      const hlRect = hlEl.getBoundingClientRect()
+      const cardRect = cardEl.getBoundingClientRect()
+
+      if (hlRect.bottom < containerRect.top || hlRect.top > containerRect.bottom) return
+      if (cardRect.bottom < containerRect.top || cardRect.top > containerRect.bottom) return
+
+      setPendingDashedLine({
+        x1: hlRect.right - containerRect.left,
+        y1: hlRect.top + hlRect.height / 2 - containerRect.top + scrollY,
+        x2: cardRect.left - containerRect.left,
+        y2: cardRect.top + cardRect.height / 2 - containerRect.top + scrollY,
+      })
+    }
+    const raf = requestAnimationFrame(computeLine)
+    return () => cancelAnimationFrame(raf)
+  }, [isAddingAnno, pendingSelection, dashedLines, cardHeights])
+
   // ── Collision resolution: compute non-overlapping card positions using actual heights ──
   const resolvedCardTops = useMemo(() => {
     const cards: CardRect[] = []
@@ -445,7 +504,7 @@ const ViewDocument: React.FC = () => {
       cards.push({ id: anno.id, top: hlCenterY - height / 2 - 12, height })
     })
 
-    // AddAnno card — positioned to align with selection rect center in PDF column
+    // InputBox card — positioned to align with selection rect center in PDF column
     if (isAddingAnno && pendingSelection) {
       const selCenterY = getPageTop(pendingSelection.page)
         + (pendingSelection.startY + pendingSelection.endY) / 2
@@ -532,7 +591,7 @@ const ViewDocument: React.FC = () => {
   return (
     <div style={{ width: '100vw', height: '100vh', backgroundColor: '#FFFFFF', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* TopBar */}
-      <TopBar variant="人工审核中-创建人" />
+      <TopBar status={docStatus as any} />
 
       {/* Main content wrapper (relative for SVG overlay) */}
       <div ref={mainContentRef} style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
@@ -607,18 +666,22 @@ const ViewDocument: React.FC = () => {
                 alignItems: 'center',
                 padding: '0 16px',
                 gap: '12px',
+                justifyContent: isAIReviewing ? 'flex-end' : 'flex-start',
               }}
             >
-              <span style={{ fontSize: 13, color: '#666', cursor: 'pointer' }}>−</span>
-              <span style={{ fontSize: 13, color: '#333' }}>100%</span>
-              <span style={{ fontSize: 13, color: '#666', cursor: 'pointer' }}>+</span>
-              <div style={{ width: 1, height: 20, backgroundColor: '#E5E5E5' }} />
-              <span style={{ fontSize: 13, color: '#666', cursor: 'pointer' }}>上一页</span>
-              <span style={{ fontSize: 13, color: '#333' }}>1 / {mockPages.length}</span>
-              <span style={{ fontSize: 13, color: '#666', cursor: 'pointer' }}>下一页</span>
-
-              {/* Spacer to push nav buttons to the right */}
-              <div style={{ flex: 1 }} />
+              {!isAIReviewing && (
+                <>
+                  <span style={{ fontSize: 13, color: '#666', cursor: 'pointer' }}>−</span>
+                  <span style={{ fontSize: 13, color: '#333' }}>100%</span>
+                  <span style={{ fontSize: 13, color: '#666', cursor: 'pointer' }}>+</span>
+                  <div style={{ width: 1, height: 20, backgroundColor: '#E5E5E5' }} />
+                  <span style={{ fontSize: 13, color: '#666', cursor: 'pointer' }}>上一页</span>
+                  <span style={{ fontSize: 13, color: '#333' }}>1 / {mockPages.length}</span>
+                  <span style={{ fontSize: 13, color: '#666', cursor: 'pointer' }}>下一页</span>
+                  {/* Spacer to push nav buttons to the right */}
+                  <div style={{ flex: 1 }} />
+                </>
+              )}
 
               {/* ── Annotation Navigation Buttons ── */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -680,7 +743,7 @@ const ViewDocument: React.FC = () => {
                 alignItems: 'center',
                 padding: `${COLUMN_PADDING_TOP}px 40px 60px`,
                 gap: `${PAGE_GAP}px`,
-                backgroundColor: '#F5F5F5',
+                backgroundColor: '#F0F0F0',
                 minWidth: 0,
                 userSelect: 'none',
               }}
@@ -727,6 +790,7 @@ const ViewDocument: React.FC = () => {
               {/* Pending selection rectangle */}
               {pendingSelection && (
                 <div
+                  data-pending-highlight
                   style={{
                     position: 'absolute',
                     left: `calc(50% - ${PAGE_WIDTH / 2}px + ${pendingSelection.startX}px)`,
@@ -766,7 +830,7 @@ const ViewDocument: React.FC = () => {
                         flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center',
                         padding: '8px 0', borderRadius: '6px',
                         backgroundColor: activeTab === '批注' ? '#FFFFFF' : 'transparent',
-                        boxShadow: activeTab === '批注' ? '0px 2px 4px rgba(0,0,0,0.06)' : 'none',
+                        boxShadow: activeTab === '批注' ? '1px 2px 4px 0px rgba(0,0,0,0.08), 0px 3px 8px 0px rgba(0,0,0,0.05)' : 'none',
                         cursor: 'pointer',
                       }}
                     >
@@ -778,7 +842,7 @@ const ViewDocument: React.FC = () => {
                         flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center',
                         padding: '8px 0', borderRadius: '6px',
                         backgroundColor: activeTab === '历史版本' ? '#FFFFFF' : 'transparent',
-                        boxShadow: activeTab === '历史版本' ? '0px 2px 4px rgba(0,0,0,0.06)' : 'none',
+                        boxShadow: activeTab === '历史版本' ? '1px 2px 4px 0px rgba(0,0,0,0.08), 0px 3px 8px 0px rgba(0,0,0,0.05)' : 'none',
                         cursor: 'pointer',
                       }}
                     >
@@ -788,7 +852,7 @@ const ViewDocument: React.FC = () => {
 
                   {activeTab === '批注' && (
                     <div style={{ display: 'flex', justifyContent: 'center' }}>
-                      {(['全部', 'AI', '人工'] as const).map(tab => (
+                      {(['全部', 'AI', '人工', '本部门'] as const).map(tab => (
                         <div
                           key={tab}
                           onClick={() => setActiveSubTab(tab)}
@@ -815,7 +879,7 @@ const ViewDocument: React.FC = () => {
                   position: 'relative',
                   flexShrink: 0,
                   height: pdfColumnHeight > 0 ? pdfColumnHeight : undefined,
-                  padding: '12px 8px',
+                  padding: '16px',
                 }}
               >
                 {activeTab === '批注' ? (
@@ -834,11 +898,11 @@ const ViewDocument: React.FC = () => {
                           onClick={(e) => e.stopPropagation()} style={{
                           position: 'absolute',
                           top: addAnnoTop,
-                          left: 8,
-                          right: 8,
+                          left: 16,
+                          right: 16,
                           zIndex: 10,
                         }}>
-                          <AddAnno
+                          <InputBox
                             variant="adding"
                             onSubmit={handleAddAnnotation}
                             onCancel={handleCancelAdd}
@@ -861,8 +925,8 @@ const ViewDocument: React.FC = () => {
                           style={{
                             position: 'absolute',
                             top: cardTop,
-                            left: 8,
-                            right: 8,
+                            left: 16,
+                            right: 16,
                             zIndex: activeAnnotation === anno.id ? 6 : 1,
                           }}
                         >
@@ -876,7 +940,9 @@ const ViewDocument: React.FC = () => {
                             issueContent={anno.issueContent}
                             suggestionTitle={anno.suggestionTitle}
                             suggestionContent={anno.suggestionContent}
+                            risk={anno.risk}
                             interactive
+                            readOnly={isReadOnly}
                             id={anno.id}
                             isActive={activeAnnotation === anno.id}
                             onActivate={handleActivateAnnotation}
@@ -897,15 +963,15 @@ const ViewDocument: React.FC = () => {
               </div>
             </div>
 
-            {/* ─── SVG Dashed Lines Overlay (all visible annotations) ─── */}
-            {Object.keys(dashedLines).length > 0 && (
+            {/* ─── SVG Dashed Lines Overlay (all visible annotations + pending add) ─── */}
+            {(Object.keys(dashedLines).length > 0 || pendingDashedLine) && (
               <svg
                 style={{
                   position: 'absolute',
                   top: 0,
                   left: 0,
-                  width: '100%',
-                  height: '100%',
+                  width: sharedScrollRef.current?.scrollWidth ?? '100%',
+                  height: sharedScrollRef.current?.scrollHeight ?? '100%',
                   pointerEvents: 'none',
                   zIndex: 8,
                 }}
@@ -931,10 +997,60 @@ const ViewDocument: React.FC = () => {
                     />
                   )
                 })}
+                {/* Dashed line from pending selection to InputBox card */}
+                {pendingDashedLine && (
+                  <polyline
+                    points={`${pendingDashedLine.x1},${pendingDashedLine.y1} ${pendingDashedLine.x2 - 80},${pendingDashedLine.y1} ${pendingDashedLine.x2},${pendingDashedLine.y2}`}
+                    fill="none"
+                    stroke="#2A6DE7"
+                    strokeWidth={1.5}
+                    strokeDasharray="6 4"
+                    opacity={0.6}
+                  />
+                )}
               </svg>
             )}
           </div>
       </div>
+
+      {/* ── AI审核中 Overlay (不遮挡 TopBar，保留返回按钮可点击) ── */}
+      {isAIReviewing && (
+        <div style={{
+          position: 'fixed',
+          top: 60,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.1)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 9999,
+        }}>
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '8px',
+            width: '112px',
+          }}>
+            <DotLottieReact
+              src="/lottie/AILoading.lottie"
+              loop
+              autoplay
+              style={{ width: 40, height: 40 }}
+            />
+            <span style={{
+              fontSize: '14px',
+              color: '#333333',
+              fontFamily: "'PingFang SC', sans-serif",
+              fontWeight: 400,
+              textAlign: 'center',
+              whiteSpace: 'nowrap',
+            }}>AI审核中,请稍后...</span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

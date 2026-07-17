@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import Department from './Department'
-import AddAnno from './AddAnno'
+import InputBox from './InputBox'
 
 type StatusVariant = 'accept' | 'refuse' | 'addComment'
 
@@ -54,7 +54,7 @@ const Status: React.FC<StatusProps> = ({
               flexShrink: 0,
             }}
           />
-          <span style={{ fontSize: '13px', color: '#333333', fontFamily: "'PingFang SC', sans-serif" }}>
+          <span style={{ fontSize: '12px', color: '#333333', fontFamily: "'PingFang SC', sans-serif" }}>
             已接受批注
           </span>
         </div>
@@ -90,7 +90,7 @@ const Status: React.FC<StatusProps> = ({
               flexShrink: 0,
             }}
           />
-          <span style={{ fontSize: '13px', color: '#333333', fontFamily: "'PingFang SC', sans-serif" }}>
+          <span style={{ fontSize: '12px', color: '#333333', fontFamily: "'PingFang SC', sans-serif" }}>
             已拒绝批注
           </span>
         </div>
@@ -112,8 +112,8 @@ const Status: React.FC<StatusProps> = ({
         flexDirection: 'column',
         padding: '4px 8px',
         gap: '4px',
-        backgroundColor: '#F4F8FF',
-        borderRadius: '8px',
+        backgroundColor: '#FAFAFA',
+        borderRadius: '4px',
         width: '100%',
       }}
     >
@@ -127,7 +127,7 @@ const Status: React.FC<StatusProps> = ({
         <span style={{ fontSize: '12px', color: '#999999' }}>{time}</span>
       </div>
       {isEditing ? (
-        <AddAnno
+        <InputBox
           variant="adding"
           initialText={content || '该图片用于印刷物料，需确保分辨率达300dpi，已联系设计师处理，预计明日更新。'}
           onSubmit={(text) => {

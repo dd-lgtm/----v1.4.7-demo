@@ -1,6 +1,6 @@
 import React from 'react'
 
-type DepartmentVariant = 'RA' | 'MA' | 'Branding' | 'Legal'
+type DepartmentVariant = 'RA' | 'MA' | 'Branding' | 'Legal' | 'AI'
 
 interface DepartmentProps {
   variant: DepartmentVariant
@@ -11,9 +11,48 @@ const colorMap: Record<DepartmentVariant, string> = {
   MA: '#FC803E',
   Branding: '#4CBFFD',
   Legal: '#45BF65',
+  AI: '#FF85D8',
 }
 
+const RobotIcon: React.FC = () => (
+  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <g clipPath="url(#robotClip)">
+      <path d="M6.75 1C6.75 1.22212 6.65345 1.42169 6.5 1.55903V2.5H9C9.82845 2.5 10.5 3.17158 10.5 4V9C10.5 9.82845 9.82845 10.5 9 10.5H3C2.17158 10.5 1.5 9.82845 1.5 9V4C1.5 3.17158 2.17158 2.5 3 2.5H5.5V1.55903C5.34655 1.42169 5.25 1.22212 5.25 1C5.25 0.585785 5.5858 0.25 6 0.25C6.4142 0.25 6.75 0.585785 6.75 1ZM3 3.5C2.72386 3.5 2.5 3.72386 2.5 4V9C2.5 9.27615 2.72386 9.5 3 9.5H9C9.27615 9.5 9.5 9.27615 9.5 9V4C9.5 3.72386 9.27615 3.5 9 3.5H6.5H5.5H3ZM1 5H0V8H1V5ZM11 5H12V8H11V5ZM4.5 7.25C4.91422 7.25 5.25 6.9142 5.25 6.5C5.25 6.0858 4.91422 5.75 4.5 5.75C4.08578 5.75 3.75 6.0858 3.75 6.5C3.75 6.9142 4.08578 7.25 4.5 7.25ZM7.5 7.25C7.9142 7.25 8.25 6.9142 8.25 6.5C8.25 6.0858 7.9142 5.75 7.5 5.75C7.0858 5.75 6.75 6.0858 6.75 6.5C6.75 6.9142 7.0858 7.25 7.5 7.25Z" fill="white"/>
+    </g>
+    <defs>
+      <clipPath id="robotClip">
+        <rect width="12" height="12" fill="white"/>
+      </clipPath>
+    </defs>
+  </svg>
+)
+
 const Department: React.FC<DepartmentProps> = ({ variant }) => {
+  if (variant === 'AI') {
+    return (
+      <span
+        style={{
+          display: 'inline-flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: '0 4px',
+          gap: '2px',
+          borderRadius: '2px',
+          backgroundColor: colorMap.AI,
+          color: '#fff',
+          fontSize: '12px',
+          fontFamily: "'PingFang SC', sans-serif",
+          fontWeight: 400,
+          lineHeight: '18px',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        <RobotIcon />
+        RA
+      </span>
+    )
+  }
+
   return (
     <span
       style={{

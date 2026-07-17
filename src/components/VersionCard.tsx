@@ -36,7 +36,7 @@ const VersionCard: React.FC<VersionCardProps> = ({
         width: '100%',
         height: '96px',
         backgroundColor: '#FFFFFF',
-        border: isCurrent ? '2px solid #2A6DE7' : '1px solid #E5E5E5',
+        border: isCurrent ? '1px solid #2A6DE7' : '1px solid #E5E5E5',
         borderRadius: '8px',
         boxSizing: 'border-box',
       }}
