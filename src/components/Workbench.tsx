@@ -1,13 +1,15 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import {
   ChevronDown, ChevronLeft, ChevronRight,
   Plus
 } from 'lucide-react'
+import Modal from './Modal'
 
 // ─── Types ────────────────────────────────────────────────
 type TagVariant = 'AI审核中' | 'AI审核完成' | '人工审核中' | '审核通过' | '待补充' | '无需审核' | '退回修改' | 'AI审核失败'
-type FileType = 'PDF' | 'Photo' | 'Word' | 'PPT'
+type FileType = 'PDF' | 'Photo' | 'PPT'
 type RowAction = 'icons' | 'audit-button' | 'audit-done'
 
 interface TableRow {
@@ -20,15 +22,16 @@ interface TableRow {
   tag: TagVariant
   fileType: FileType
   action: RowAction
+  reviewResult?: '审核通过' | '返回修改' | '待补充' | '无需审核'
 }
 
 // ─── Tag colors ────────────────────────────────────────────
 const tagStyles: Record<TagVariant, { bg: string; color: string }> = {
   'AI审核中':   { bg: '#F4F8FF', color: '#2A6DE7' },
-  'AI审核完成': { bg: '#FAFAFA', color: '#666666' },
+  'AI审核完成': { bg: '#F6F2FF', color: '#A56EFF' },
   '人工审核中': { bg: '#F4F8FF', color: '#2A6DE7' },
   '审核通过':   { bg: '#F5FFF5', color: '#23A123' },
-  '待补充':     { bg: '#FEF6DF', color: '#FFBB00' },
+  '待补充':     { bg: '#FEF6DF', color: '#d69d00' },
   '无需审核':   { bg: '#F5FFF5', color: '#23A123' },
   '退回修改':   { bg: '#FFF1F1', color: '#FA4D56' },
   'AI审核失败': { bg: '#FFF1F1', color: '#FA4D56' },
@@ -38,13 +41,13 @@ const tagStyles: Record<TagVariant, { bg: string; color: string }> = {
 const mockRows: TableRow[] = [
   { id: '1',  title: '创新药人体功能利用度', docId: 'DOC-2026-0601-042', version: 'V1', uploader: '段威丞', uploadTime: '2026-05-10 10:00', tag: 'AI审核中',   fileType: 'PDF',   action: 'icons' },
   { id: '2',  title: '心血管健康科普长图',   docId: 'DOC-2026-0601-042', version: 'V1', uploader: '段威丞', uploadTime: '2026-05-10 10:00', tag: 'AI审核完成', fileType: 'Photo', action: 'icons' },
-  { id: '3',  title: '这是一份word文档',     docId: 'DOC-2026-0601-042', version: 'V1', uploader: '段威丞', uploadTime: '2026-05-10 10:00', tag: '人工审核中', fileType: 'Word',  action: 'icons' },
+  { id: '3',  title: '这是一份PPT文档',     docId: 'DOC-2026-0601-042', version: 'V1', uploader: '段威丞', uploadTime: '2026-05-10 10:00', tag: '人工审核中', fileType: 'PPT',   action: 'icons' },
   { id: '4',  title: '心血管健康科普长图',   docId: 'DOC-2026-0601-042', version: 'V1', uploader: '段威丞', uploadTime: '2026-05-10 10:00', tag: '待补充',     fileType: 'Photo', action: 'icons' },
   { id: '5',  title: '这是个PPT',           docId: 'DOC-2026-0601-042', version: 'V1', uploader: '段威丞', uploadTime: '2026-05-10 10:00', tag: '审核通过',   fileType: 'PPT',   action: 'icons' },
   { id: '6',  title: '创新药人体功能利用度', docId: 'DOC-2026-0601-042', version: 'V1', uploader: '段威丞', uploadTime: '2026-05-10 10:00', tag: '无需审核',   fileType: 'PDF',   action: 'icons' },
   { id: '7',  title: '创新药人体功能利用度', docId: 'DOC-2026-0601-042', version: 'V1', uploader: '段威丞', uploadTime: '2026-05-10 10:00', tag: '退回修改',   fileType: 'PDF',   action: 'icons' },
   { id: '8',  title: '心血管健康科普长图',   docId: 'DOC-2026-0601-042', version: 'V1', uploader: '段威丞', uploadTime: '2026-05-10 10:00', tag: '人工审核中', fileType: 'Photo', action: 'audit-button' },
-  { id: '9',  title: '创新药临床试验报告',   docId: 'DOC-2026-0601-042', version: 'V1', uploader: '段威丞', uploadTime: '2026-05-10 10:00', tag: '审核通过',   fileType: 'PDF',   action: 'audit-done' },
+  { id: '9',  title: '创新药临床试验报告',   docId: 'DOC-2026-0601-042', version: 'V1', uploader: '段威丞', uploadTime: '2026-05-10 10:00', tag: '审核通过',   fileType: 'PDF',   action: 'audit-done', reviewResult: '无需审核' },
   { id: '10', title: '新型疫苗开发进展',     docId: 'DOC-2026-0601-042', version: 'V1', uploader: '段威丞', uploadTime: '2026-05-10 10:00', tag: 'AI审核失败', fileType: 'PDF',   action: 'icons' },
   { id: '11', title: '新型疫苗开发进展',     docId: 'DOC-2026-0601-042', version: 'V1', uploader: '段威丞', uploadTime: '2026-05-10 10:00', tag: '人工审核中', fileType: 'PDF',   action: 'audit-button' },
   { id: '12', title: '新型疫苗开发进展',     docId: 'DOC-2026-0601-042', version: 'V1', uploader: '段威丞', uploadTime: '2026-05-10 10:00', tag: '人工审核中', fileType: 'PDF',   action: 'audit-button' },
@@ -75,9 +78,53 @@ const Workbench: React.FC = () => {
   const [deleteMode, setDeleteMode] = useState<'single' | 'batch'>('single')
   const [rows, setRows] = useState<TableRow[]>(mockRows)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [hoveredAction, setHoveredAction] = useState<{ rowId: string; action: string } | null>(null)
+  const [hoveredAction, setHoveredAction] = useState<{ rowId: string; action: string; rect: { left: number; top: number; width: number } } | null>(null)
+  const [hoveredRowId, setHoveredRowId] = useState<string | null>(null)
 
-  const filterOptions = ['全部', '待我审核', '由我创建']
+  // Seed sessionStorage with pre-existing audit-done rows on first mount
+  useEffect(() => {
+    try {
+      const results = JSON.parse(sessionStorage.getItem('review_results') || '{}') as Record<string, string>
+      const reviewed = JSON.parse(sessionStorage.getItem('reviewed_docs') || '[]') as string[]
+      let changed = false
+      mockRows.forEach(r => {
+        if (r.action === 'audit-done' && r.reviewResult && !results[r.id]) {
+          results[r.id] = r.reviewResult
+          if (!reviewed.includes(r.id)) reviewed.push(r.id)
+          changed = true
+        }
+      })
+      if (changed) {
+        sessionStorage.setItem('review_results', JSON.stringify(results))
+        sessionStorage.setItem('reviewed_docs', JSON.stringify(reviewed))
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  // Sync review status from sessionStorage when page becomes visible (user returns from document view)
+  useEffect(() => {
+    const syncReviewedDocs = () => {
+      try {
+        const reviewed = JSON.parse(sessionStorage.getItem('reviewed_docs') || '[]') as string[]
+        if (reviewed.length > 0) {
+          setRows(prev => prev.map(r =>
+            reviewed.includes(r.id) && r.action === 'audit-button'
+              ? { ...r, action: 'audit-done' as RowAction }
+              : r
+          ))
+        }
+      } catch { /* ignore */ }
+    }
+    syncReviewedDocs()
+    window.addEventListener('focus', syncReviewedDocs)
+    window.addEventListener('storage', syncReviewedDocs)
+    return () => {
+      window.removeEventListener('focus', syncReviewedDocs)
+      window.removeEventListener('storage', syncReviewedDocs)
+    }
+  }, [])
+
+  const filterOptions = ['全部', '由我创建', '待我审核']
 
   // ── Filter rows by selected tab ──
   const filteredRows = rows.filter(row => {
@@ -88,26 +135,32 @@ const Workbench: React.FC = () => {
 
   const displayRows = filteredRows
 
-  const allSelected = displayRows.length > 0 && displayRows.every(r => selectedIds.has(r.id))
-  const someSelected = displayRows.some(r => selectedIds.has(r.id)) && !allSelected
+  // 仅“由我创建”的资料可被选择删除
+  const selectableRows = displayRows.filter(r => r.action === 'icons')
+
+  const allSelected = selectableRows.length > 0 && selectableRows.every(r => selectedIds.has(r.id))
+  const someSelected = selectableRows.some(r => selectedIds.has(r.id)) && !allSelected
+  const headerCheckboxDisabled = selectableRows.length === 0
 
   const toggleSelectAll = () => {
+    if (headerCheckboxDisabled) return
     if (allSelected) {
       setSelectedIds(prev => {
         const next = new Set(prev)
-        displayRows.forEach(r => next.delete(r.id))
+        selectableRows.forEach(r => next.delete(r.id))
         return next
       })
     } else {
       setSelectedIds(prev => {
         const next = new Set(prev)
-        displayRows.forEach(r => next.add(r.id))
+        selectableRows.forEach(r => next.add(r.id))
         return next
       })
     }
   }
 
-  const toggleSelect = (id: string) => {
+  const toggleSelect = (id: string, disabled?: boolean) => {
+    if (disabled) return
     setSelectedIds(prev => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -170,7 +223,6 @@ const Workbench: React.FC = () => {
   const fileIconMap: Record<FileType, string> = {
     PDF: '/icons/PDF-icon.svg',
     Photo: '/icons/Photo-icon.svg',
-    Word: '/icons/Word.svg',
     PPT: '/icons/PPT.svg',
   }
   const FileIcon: React.FC<{ type: FileType }> = ({ type }) => (
@@ -256,10 +308,13 @@ const Workbench: React.FC = () => {
                         工作台
                       </span>
                     </div>
-                    <div style={{
-                      display: 'flex', padding: '8px 36px', alignItems: 'center', gap: '8px',
-                      cursor: 'pointer',
-                    }}>
+                    <div
+                      onClick={() => navigate('/review-management')}
+                      style={{
+                        display: 'flex', padding: '8px 36px', alignItems: 'center', gap: '8px',
+                        cursor: 'pointer',
+                      }}
+                    >
                       <span style={{ fontSize: '14px', fontWeight: 500, color: '#333333', fontFamily: "'PingFang SC', sans-serif" }}>
                         审核管理
                       </span>
@@ -402,14 +457,14 @@ const Workbench: React.FC = () => {
                 {/* Select all checkbox */}
                 <div
                   onClick={toggleSelectAll}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: headerCheckboxDisabled ? 'default' : 'pointer', opacity: headerCheckboxDisabled ? 0.4 : 1 }}
                 >
                   <div style={{
                     width: 16, height: 16, border: '1px solid #CCCCCC', borderRadius: 2,
                     backgroundColor: allSelected ? '#2A6DE7' : someSelected ? '#2A6DE7' : '#FFFFFF',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     borderColor: (allSelected || someSelected) ? '#2A6DE7' : '#CCCCCC',
-                    cursor: 'pointer',
+                    cursor: headerCheckboxDisabled ? 'default' : 'pointer',
                   }}>
                     {allSelected && (
                       <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
@@ -438,39 +493,85 @@ const Workbench: React.FC = () => {
                   overflowY: 'auto',
                 }}
               >
-              {displayRows.map((row) => (
-                <div key={row.id} style={{
+              {displayRows.map((row) => {
+                const isRowHovered = hoveredRowId === row.id
+                return (
+                <div key={row.id}
+                  onMouseEnter={() => setHoveredRowId(row.id)}
+                  onMouseLeave={() => setHoveredRowId(null)}
+                  style={{
                   display: 'grid', gridTemplateColumns: gridCols, gap: '20px',
-                  padding: '8px 0px 8px 8px', backgroundColor: selectedIds.has(row.id) ? '#F4F8FF' : '#FFFFFF',
+                  padding: '8px 0px 8px 8px',
+                  backgroundColor: selectedIds.has(row.id) ? '#F4F8FF' : isRowHovered ? '#F5F5F5' : '#FFFFFF',
                   borderBottom: '1px solid #E5E5E5',
                   alignItems: 'center', height: '44px',
+                  transition: 'background-color 0.15s',
                 }}>
                   {/* Checkbox */}
-                  <div
-                    onClick={() => toggleSelect(row.id)}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
-                  >
-                    <div style={{
-                      width: 16, height: 16, border: '1px solid #CCCCCC', borderRadius: 2,
-                      backgroundColor: selectedIds.has(row.id) ? '#2A6DE7' : '#FFFFFF',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      borderColor: selectedIds.has(row.id) ? '#2A6DE7' : '#CCCCCC',
-                      cursor: 'pointer',
-                    }}>
-                      {selectedIds.has(row.id) && (
-                        <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
-                          <path d="M1 4L3.5 6.5L9 1" stroke="#FFFFFF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      )}
-                    </div>
-                  </div>
+                  {(() => {
+                    const isDisabled = row.action !== 'icons'
+                    const isSelected = selectedIds.has(row.id)
+                    return (
+                      <div
+                        onClick={() => toggleSelect(row.id, isDisabled)}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isDisabled ? 'default' : 'pointer', opacity: isDisabled ? 0.4 : 1 }}
+                      >
+                        <div style={{
+                          width: 16, height: 16, border: '1px solid #CCCCCC', borderRadius: 2,
+                          backgroundColor: isSelected ? '#2A6DE7' : '#FFFFFF',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          borderColor: isSelected ? '#2A6DE7' : '#CCCCCC',
+                          cursor: isDisabled ? 'default' : 'pointer',
+                        }}>
+                          {isSelected && (
+                            <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
+                              <path d="M1 4L3.5 6.5L9 1" stroke="#FFFFFF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })()}
                   {/* Title + file icon */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <div
+                    style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}
+                    onClick={() => {
+                      let reviewResult = ''
+                      try {
+                        const results = JSON.parse(sessionStorage.getItem('review_results') || '{}') as Record<string, string>
+                        reviewResult = results[row.id] || ''
+                      } catch { /* ignore */ }
+                      if (row.action === 'icons') {
+                        navigate(`/document?status=${encodeURIComponent(row.tag)}&source=created`)
+                      } else {
+                        navigate(`/document?status=${encodeURIComponent(row.tag)}&source=review&rowId=${encodeURIComponent(row.id)}${reviewResult ? `&reviewResult=${encodeURIComponent(reviewResult)}` : ''}`)
+                      }
+                    }}
+                    onMouseEnter={(e) => {
+                      const el = e.currentTarget as HTMLElement
+                      const r = el.getBoundingClientRect()
+                      setHoveredAction({ rowId: row.id, action: 'title', rect: { left: r.left, top: r.top, width: r.width } })
+                    }}
+                    onMouseLeave={() => { if (hoveredAction?.action === 'title') setHoveredAction(null) }}
+                  >
                     <FileIcon type={row.fileType} />
-                    <span style={{ fontSize: '14px', color: '#333333', fontFamily: "'PingFang SC', sans-serif" }}>
+                    <span style={{ fontSize: '14px', color: '#333333', fontFamily: "'PingFang SC', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {row.title}
                     </span>
                   </div>
+                  {hoveredAction?.rowId === row.id && hoveredAction?.action === 'title' && createPortal(
+                    <div style={{
+                      position: 'fixed', left: hoveredAction.rect.left + hoveredAction.rect.width / 2, top: hoveredAction.rect.top - 4,
+                      transform: 'translate(-50%, -100%)', display: 'flex', flexDirection: 'column', alignItems: 'center',
+                      pointerEvents: 'none', zIndex: 9999,
+                    }}>
+                      <div style={{ padding: '4px 8px', backgroundColor: 'rgba(51,51,51,0.9)', borderRadius: '2px', whiteSpace: 'nowrap' }}>
+                        <span style={{ fontSize: '12px', color: '#FFFFFF', fontFamily: "'PingFang SC', sans-serif" }}>{row.title}</span>
+                      </div>
+                      <img src="/icons/tooltip-arrow.svg" alt="" style={{ width: 10, height: 8 }} />
+                    </div>,
+                    document.body
+                  )}
                   {/* Doc ID */}
                   <span style={{ fontSize: '14px', color: '#333333', fontFamily: "'PingFang SC', sans-serif", display: 'flex', alignItems: 'center', height: '100%' }}>
                     {row.docId}
@@ -498,15 +599,20 @@ const Workbench: React.FC = () => {
                         <div
                           style={{ position: 'relative', display: 'flex', alignItems: 'center', cursor: 'pointer' }}
                           onClick={() => navigate(`/document?status=${encodeURIComponent(row.tag)}&source=created`)}
-                          onMouseEnter={() => setHoveredAction({ rowId: row.id, action: 'view' })}
+                          onMouseEnter={(e) => {
+                            const el = e.currentTarget as HTMLElement
+                            const r = el.getBoundingClientRect()
+                            setHoveredAction({ rowId: row.id, action: 'view', rect: { left: r.left, top: r.top, width: r.width } })
+                          }}
                           onMouseLeave={() => setHoveredAction(null)}
                         >
                           <img src="/icons/EyeLine.svg" alt="view" style={{ width: 16, height: 16 }} />
-                          {hoveredAction?.rowId === row.id && hoveredAction?.action === 'view' && (
+                          {hoveredAction?.rowId === row.id && hoveredAction?.action === 'view' && createPortal(
                             <div style={{
-                              position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',
-                              marginBottom: 2, display: 'flex', flexDirection: 'column', alignItems: 'center',
-                              pointerEvents: 'none', zIndex: 10,
+                              position: 'fixed', left: hoveredAction.rect.left + hoveredAction.rect.width / 2, top: hoveredAction.rect.top - 4,
+                              transform: 'translate(-50%, -100%)',
+                              display: 'flex', flexDirection: 'column', alignItems: 'center',
+                              pointerEvents: 'none', zIndex: 9999,
                             }}>
                               <div style={{
                                 padding: '4px 8px', backgroundColor: 'rgba(51, 51, 51, 0.9)',
@@ -515,21 +621,27 @@ const Workbench: React.FC = () => {
                                 <span style={{ fontSize: '12px', color: '#FFFFFF', fontFamily: "'PingFang SC', sans-serif", fontWeight: 400 }}>查看</span>
                               </div>
                               <img src="/icons/tooltip-arrow.svg" alt="" style={{ width: 10, height: 8 }} />
-                            </div>
+                            </div>,
+                            document.body
                           )}
                         </div>
                         <div
                           style={{ position: 'relative', display: 'flex', alignItems: 'center', cursor: 'pointer' }}
                           onClick={() => handleDeleteClick(row.id)}
-                          onMouseEnter={() => setHoveredAction({ rowId: row.id, action: 'delete' })}
+                          onMouseEnter={(e) => {
+                            const el = e.currentTarget as HTMLElement
+                            const r = el.getBoundingClientRect()
+                            setHoveredAction({ rowId: row.id, action: 'delete', rect: { left: r.left, top: r.top, width: r.width } })
+                          }}
                           onMouseLeave={() => setHoveredAction(null)}
                         >
                           <img src="/icons/delete-bin-7-line.svg" alt="delete" style={{ width: 16, height: 16 }} />
-                          {hoveredAction?.rowId === row.id && hoveredAction?.action === 'delete' && (
+                          {hoveredAction?.rowId === row.id && hoveredAction?.action === 'delete' && createPortal(
                             <div style={{
-                              position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',
-                              marginBottom: 2, display: 'flex', flexDirection: 'column', alignItems: 'center',
-                              pointerEvents: 'none', zIndex: 10,
+                              position: 'fixed', left: hoveredAction.rect.left + hoveredAction.rect.width / 2, top: hoveredAction.rect.top - 4,
+                              transform: 'translate(-50%, -100%)',
+                              display: 'flex', flexDirection: 'column', alignItems: 'center',
+                              pointerEvents: 'none', zIndex: 9999,
                             }}>
                               <div style={{
                                 padding: '4px 8px', backgroundColor: 'rgba(51, 51, 51, 0.9)',
@@ -538,7 +650,8 @@ const Workbench: React.FC = () => {
                                 <span style={{ fontSize: '12px', color: '#FFFFFF', fontFamily: "'PingFang SC', sans-serif", fontWeight: 400 }}>删除</span>
                               </div>
                               <img src="/icons/tooltip-arrow.svg" alt="" style={{ width: 10, height: 8 }} />
-                            </div>
+                            </div>,
+                            document.body
                           )}
                         </div>
                       </>
@@ -547,7 +660,15 @@ const Workbench: React.FC = () => {
                         padding: '4px 15px', backgroundColor: '#FFFFFF',
                         border: '1px solid #CCCCCC', borderRadius: '4px', cursor: 'pointer',
                       }}
-                        onClick={() => navigate(`/document?status=${encodeURIComponent(row.tag)}&source=review`)}
+                        onClick={() => {
+                          // Pass existing review result from sessionStorage if available
+                          let reviewResult = ''
+                          try {
+                            const results = JSON.parse(sessionStorage.getItem('review_results') || '{}') as Record<string, string>
+                            reviewResult = results[row.id] || ''
+                          } catch { /* ignore */ }
+                          navigate(`/document?status=${encodeURIComponent(row.tag)}&source=review&rowId=${encodeURIComponent(row.id)}${reviewResult ? `&reviewResult=${encodeURIComponent(reviewResult)}` : ''}`)
+                        }}
                       >
                         <span style={{ fontSize: '14px', color: '#333333', fontFamily: "'PingFang SC', sans-serif" }}>查看</span>
                       </button>
@@ -556,14 +677,14 @@ const Workbench: React.FC = () => {
                         padding: '4px 15px', backgroundColor: '#2A6DE7',
                         border: 'none', borderRadius: '4px', cursor: 'pointer',
                       }}
-                        onClick={() => navigate(`/document?status=${encodeURIComponent(row.tag)}&source=review`)}
+                        onClick={() => navigate(`/document?status=${encodeURIComponent(row.tag)}&source=review&rowId=${encodeURIComponent(row.id)}`)}
                       >
                         <span style={{ fontSize: '14px', color: '#FFFFFF', fontFamily: "'PingFang SC', sans-serif" }}>审核</span>
                       </button>
                     )}
                   </div>
                 </div>
-              ))}
+              )})}
               </div>
             </div>
 
@@ -604,55 +725,16 @@ const Workbench: React.FC = () => {
       </div>
 
       {/* ── Delete Confirmation Modal ── */}
-      {deleteConfirmOpen && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          display: 'flex', justifyContent: 'center', alignItems: 'center',
-          zIndex: 1000,
-        }}>
-          <div style={{
-            backgroundColor: '#FFFFFF', borderRadius: '8px',
-            padding: '24px', width: '400px',
-            boxShadow: '1px 2px 4px 0px rgba(0,0,0,0.08), 0px 3px 8px 0px rgba(0,0,0,0.05)',
-          }}>
-            <div style={{ marginBottom: '16px' }}>
-              <span style={{
-                fontSize: '16px', fontWeight: 600, color: '#333333',
-                fontFamily: "'PingFang SC', sans-serif",
-              }}>确认删除</span>
-            </div>
-            <div style={{ marginBottom: '24px' }}>
-              <span style={{
-                fontSize: '14px', color: '#666666',
-                fontFamily: "'PingFang SC', sans-serif",
-              }}>{ deleteMode === 'batch' ? `确定要删除这${selectedIds.size}条资料吗？此操作不可撤销。` : '确定要删除这条资料吗？此操作不可撤销。'}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-              <button
-                style={{
-                  padding: '8px 20px', border: '1px solid #CCCCCC', borderRadius: '4px',
-                  backgroundColor: '#FFFFFF', cursor: 'pointer',
-                  fontSize: '14px', color: '#333333', fontFamily: "'PingFang SC', sans-serif",
-                }}
-                onClick={handleCancelDelete}
-              >
-                取消
-              </button>
-              <button
-                style={{
-                  padding: '8px 20px', border: 'none', borderRadius: '4px',
-                  backgroundColor: '#FA4D56', cursor: 'pointer',
-                  fontSize: '14px', color: '#FFFFFF', fontFamily: "'PingFang SC', sans-serif",
-                }}
-                onClick={handleConfirmDelete}
-              >
-                删除
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Modal
+        visible={deleteConfirmOpen}
+        onClose={handleCancelDelete}
+        title="确认删除"
+        description={deleteMode === 'batch' ? `确定要删除这${selectedIds.size}条资料吗？此操作不可撤销。` : '确定要删除这条资料吗？此操作不可撤销。'}
+        actions={[
+          { label: '取消', variant: 'default', onClick: handleCancelDelete },
+          { label: '删除', variant: 'primary', onClick: handleConfirmDelete },
+        ]}
+      />
     </div>
   )
 }

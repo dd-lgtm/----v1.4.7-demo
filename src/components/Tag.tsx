@@ -7,6 +7,7 @@ type TagVariant =
   | 'AI审核失败'
   | '待补充'
   | '返回修改'
+  | '退回修改'
   | '审核通过'
   | '无需审核'
   | 'waiting'
@@ -34,8 +35,8 @@ const variantStyles: Record<TagVariant, TagStyle> = {
     color: '#2A6DE7',
   },
   'AI审核完成': {
-    background: '#FAFAFA',
-    color: '#666666',
+    background: '#F6F2FF',
+    color: '#A56EFF',
   },
   'AI审核失败': {
     background: '#FFF1F1',
@@ -43,9 +44,13 @@ const variantStyles: Record<TagVariant, TagStyle> = {
   },
   '待补充': {
     background: '#FEF6DF',
-    color: '#FFBB00',
+    color: '#d69d00',
   },
   '返回修改': {
+    background: '#FFF1F1',
+    color: '#FA4D56',
+  },
+  '退回修改': {
     background: '#FFF1F1',
     color: '#FA4D56',
   },
@@ -85,6 +90,7 @@ const Tag: React.FC<TagProps> = ({ variant, label, bordered = false, dot = false
         lineHeight: '18px',
         whiteSpace: 'nowrap',
         border: bordered ? `1px solid ${style.color}` : 'none',
+        cursor: variant === '人工审核中' ? 'pointer' : undefined,
       }}
     >
       {variant === 'AI审核失败' && (

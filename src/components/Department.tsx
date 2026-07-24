@@ -1,17 +1,18 @@
 import React from 'react'
 
-type DepartmentVariant = 'RA' | 'MA' | 'Branding' | 'Legal' | 'AI'
+type DepartmentVariant = 'RA' | 'MA' | 'Branding' | 'Legal'
 
 interface DepartmentProps {
   variant: DepartmentVariant
+  /** 是否为AI批注，AI批注会在部门名称前显示robot图标 */
+  isAI?: boolean
 }
 
 const colorMap: Record<DepartmentVariant, string> = {
-  RA: '#C862FF',
-  MA: '#FC803E',
-  Branding: '#4CBFFD',
-  Legal: '#45BF65',
-  AI: '#FF85D8',
+  RA: '#00CEE0',
+  MA: '#33B1FF',
+  Branding: '#BE95FF',
+  Legal: '#FF832C',
 }
 
 const RobotIcon: React.FC = () => (
@@ -27,49 +28,26 @@ const RobotIcon: React.FC = () => (
   </svg>
 )
 
-const Department: React.FC<DepartmentProps> = ({ variant }) => {
-  if (variant === 'AI') {
-    return (
-      <span
-        style={{
-          display: 'inline-flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: '0 4px',
-          gap: '2px',
-          borderRadius: '2px',
-          backgroundColor: colorMap.AI,
-          color: '#fff',
-          fontSize: '12px',
-          fontFamily: "'PingFang SC', sans-serif",
-          fontWeight: 400,
-          lineHeight: '18px',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        <RobotIcon />
-        RA
-      </span>
-    )
-  }
-
+const Department: React.FC<DepartmentProps> = ({ variant, isAI = false }) => {
   return (
     <span
       style={{
         display: 'inline-flex',
         justifyContent: 'center',
         alignItems: 'center',
-        padding: '0 8px',
-        borderRadius: '2px',
+        padding: '2px 4px',
+        gap: isAI ? '2px' : '0px',
+        borderRadius: '4px',
         backgroundColor: colorMap[variant],
         color: '#fff',
         fontSize: '12px',
-        fontFamily: "'PingFang SC', sans-serif",
+        fontFamily: "'Inter', 'PingFang SC', sans-serif",
         fontWeight: 400,
         lineHeight: '18px',
         whiteSpace: 'nowrap',
       }}
     >
+      {isAI && <RobotIcon />}
       {variant}
     </span>
   )

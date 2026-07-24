@@ -3,11 +3,13 @@
  * 
  * 核心规则：
  * - 任意两个card外边框之间最小间距 ≥ MIN_GAP (4px)
+ * - 第一个card的最小top位置 ≥ MIN_TOP (8px)，防止被标签区域遮挡
  * - 仅向下推移被碰撞的card，不向上挤压
  * - 重排仅影响碰撞区域的card，无碰撞的保持原位
  */
 
 export const MIN_GAP = 4
+export const MIN_TOP = 8
 
 export interface CardRect {
   id: string
@@ -32,6 +34,11 @@ export function resolveCardPositions(
 
   // 按自然top排序（从上到下）
   const sorted = [...cards].sort((a, b) => a.top - b.top)
+
+  // 第一个card的最小top位置
+  if (sorted[0].top < MIN_TOP) {
+    sorted[0].top = MIN_TOP
+  }
 
   // 找到changedCard在排序后的索引
   const changedIdx = changedId

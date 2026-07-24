@@ -1,11 +1,25 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { DotLottieReact } from '@lottiefiles/dotlottie-react'
 import TopBar from './TopBar'
 import Annotation from './Annotation'
 import VersionCard from './VersionCard'
 import InputBox from './InputBox'
+import Modal from './Modal'
 import { resolveCardPositions, type CardRect } from '../utils/collisionResolver'
+import { Document, Page, pdfjs } from 'react-pdf'
+import 'react-pdf/dist/Page/AnnotationLayer.css'
+import 'react-pdf/dist/Page/TextLayer.css'
+
+// PDF worker & file
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString()
+
+const PDF_FILE = '/曲拉西利预防肺癌化疗引起的骨髓抑制1例及文献分析_黄豪杰.pdf'
+const PDF_PAGE_COUNT = 5
+const THUMB_WIDTH = 57
 
 // ─── Data Model ───────────────────────────────────────────
 interface AnnotationData {
@@ -39,69 +53,36 @@ const PAGE_GAP = 24
 const COLUMN_PADDING_TOP = 32
 const PDF_TOOLBAR_HEIGHT = 50
 
+// ─── Zoom constants ─────────────────────────────────────────
+const ZOOM_MIN = 0.25
+const ZOOM_STEP = 0.1
+const ZOOM_LEVELS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3]
+
 // ─── Fallback card heights (used before DOM measurement) ────
 function estimateCardHeight(anno: AnnotationData): number {
-  return anno.type === 'AI' ? 150 : 90
+  return anno.type === 'AI' ? 200 : 120
 }
 const ADD_ANNO_HEIGHT = 42
 
-// ─── Mock PDF Pages ───────────────────────────────────────
-interface ContentBlock {
-  type: 'title' | 'text' | 'image' | 'paragraph'
-  y: number
-  height: number
-  width?: number
+// ─── Department color map (matches Department.tsx) ──────────
+const DEPT_COLORS: Record<string, string> = {
+  RA: '#00CEE0',
+  MA: '#33B1FF',
+  Branding: '#BE95FF',
+  Legal: '#FF832C',
 }
 
-const mockPages: ContentBlock[][] = [
-  [
-    { type: 'title', y: 48, height: 28, width: 320 },
-    { type: 'text', y: 96, height: 14, width: 580 },
-    { type: 'text', y: 118, height: 14, width: 540 },
-    { type: 'text', y: 140, height: 14, width: 560 },
-    { type: 'text', y: 162, height: 14, width: 480 },
-    { type: 'paragraph', y: 196, height: 14, width: 580 },
-    { type: 'text', y: 218, height: 14, width: 560 },
-    { type: 'text', y: 240, height: 14, width: 520 },
-    { type: 'text', y: 262, height: 14, width: 580 },
-    { type: 'image', y: 300, height: 200, width: 400 },
-    { type: 'text', y: 530, height: 14, width: 580 },
-    { type: 'text', y: 552, height: 14, width: 540 },
-    { type: 'text', y: 574, height: 14, width: 500 },
-    { type: 'paragraph', y: 610, height: 14, width: 580 },
-    { type: 'text', y: 632, height: 14, width: 560 },
-    { type: 'text', y: 654, height: 14, width: 520 },
-    { type: 'text', y: 676, height: 14, width: 480 },
-  ],
-  [
-    { type: 'title', y: 48, height: 28, width: 280 },
-    { type: 'text', y: 96, height: 14, width: 560 },
-    { type: 'text', y: 118, height: 14, width: 580 },
-    { type: 'text', y: 140, height: 14, width: 520 },
-    { type: 'text', y: 162, height: 14, width: 540 },
-    { type: 'text', y: 184, height: 14, width: 480 },
-    { type: 'image', y: 220, height: 180, width: 500 },
-    { type: 'text', y: 430, height: 14, width: 580 },
-    { type: 'text', y: 452, height: 14, width: 540 },
-    { type: 'text', y: 474, height: 14, width: 560 },
-    { type: 'paragraph', y: 510, height: 14, width: 580 },
-    { type: 'text', y: 532, height: 14, width: 520 },
-    { type: 'text', y: 554, height: 14, width: 560 },
-  ],
-  [
-    { type: 'title', y: 48, height: 28, width: 360 },
-    { type: 'text', y: 96, height: 14, width: 540 },
-    { type: 'text', y: 118, height: 14, width: 580 },
-    { type: 'text', y: 140, height: 14, width: 500 },
-    { type: 'paragraph', y: 176, height: 14, width: 580 },
-    { type: 'text', y: 198, height: 14, width: 560 },
-    { type: 'text', y: 220, height: 14, width: 540 },
-    { type: 'text', y: 242, height: 14, width: 580 },
-    { type: 'image', y: 280, height: 220, width: 450 },
-    { type: 'text', y: 530, height: 14, width: 580 },
-    { type: 'text', y: 552, height: 14, width: 520 },
-  ],
-]
+/** Convert hex color to rgba with given alpha */
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `rgba(${r},${g},${b},${alpha})`
+}
+
+// ─── PDF Pages (rendered from real PDF file) ─────────────
+// mockPages kept as length array for iteration; actual content from PDF
+const mockPages: undefined[] = Array(PDF_PAGE_COUNT).fill(undefined)
 
 // ─── Initial Annotations ──────────────────────────────────
 const initialAnnotations: AnnotationData[] = [
@@ -113,9 +94,9 @@ const initialAnnotations: AnnotationData[] = [
     department: 'Branding',
     time: '06-24 14:32',
     issueTitle: '问题说明',
-    issueContent: '图片色彩空间与印刷标准不匹配，当前为RGB模式。',
+    issueContent: '图片色彩空间与印刷标准不匹配，当前为RGB模式，在印刷输出时可能出现明显色差偏差，影响品牌视觉一致性。经检测，该图片色域覆盖范围超出CMYK可印刷色域约15%，部分高饱和度颜色在转换后会产生色相偏移。',
     suggestionTitle: 'AI修改建议',
-    suggestionContent: '建议将图片色彩空间转换为CMYK模式，以确保印刷色彩准确性。',
+    suggestionContent: '建议将图片色彩空间转换为CMYK模式（FOGRA39标准），并使用ICC配置文件进行软打样预览，以确保印刷色彩准确性。同时对高饱和度区域进行手动色域映射调整，避免关键品牌色出现偏移。',
     risk: 'high',
   },
   {
@@ -151,55 +132,58 @@ function getPageTop(pageIndex: number): number {
   return pageIndex * (PAGE_HEIGHT + PAGE_GAP)
 }
 
-// ─── Mock PDF Page Renderer ──────────────────────────────
-const MockPage: React.FC<{ blocks: ContentBlock[]; pageIndex: number }> = ({ blocks, pageIndex }) => (
-  <div
-    style={{
-      width: PAGE_WIDTH,
-      height: PAGE_HEIGHT,
-      backgroundColor: '#FFFFFF',
-      position: 'relative',
-      flexShrink: 0,
-      boxShadow: '1px 2px 4px 0px rgba(0,0,0,0.08), 0px 3px 8px 0px rgba(0,0,0,0.05)',
-      margin: '0 auto',
-    }}
-  >
-    {blocks.map((block, i) => (
-      <div
-        key={i}
-        style={{
-          position: 'absolute',
-          left: 50,
-          top: block.y,
-          width: block.width || 580,
-          height: block.height,
-          backgroundColor: block.type === 'image' ? '#E8E8E8' : block.type === 'title' ? '#D0D0D0' : '#E0E0E0',
-          borderRadius: block.type === 'image' ? 4 : 2,
-        }}
-      />
-    ))}
-    <span
-      style={{
-        position: 'absolute',
-        bottom: 20,
-        right: 30,
-        fontSize: 11,
-        color: '#BBBBBB',
-        fontFamily: "'PingFang SC', sans-serif",
-      }}
-    >
-      {pageIndex + 1} / {mockPages.length}
-    </span>
-  </div>
+// ─── PDF Page Renderer ─────────────────────────────────────
+const PdfPage: React.FC<{ pageIndex: number }> = ({ pageIndex }) => (
+  <Document file={PDF_FILE} loading={null}>
+    <Page
+      pageNumber={pageIndex + 1}
+      width={PAGE_WIDTH}
+      renderTextLayer={false}
+      renderAnnotationLayer={false}
+      loading={null}
+    />
+  </Document>
+)
+
+const PdfThumbnail: React.FC<{ pageIndex: number }> = ({ pageIndex }) => (
+  <Document file={PDF_FILE} loading={null}>
+    <Page
+      pageNumber={pageIndex + 1}
+      width={THUMB_WIDTH}
+      renderTextLayer={false}
+      renderAnnotationLayer={false}
+      loading={null}
+    />
+  </Document>
 )
 
 // ═══════════════════════════════════════════════════════════
 const ViewDocument: React.FC = () => {
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const docStatus = (searchParams.get('status') || '人工审核中') as string
   const docSource = (searchParams.get('source') || 'review') as string
+  const rowId = (searchParams.get('rowId') || '') as string
+  const urlReviewResult = (searchParams.get('reviewResult') || '') as string
   const isAIReviewing = docStatus === 'AI审核中'
-  const isReadOnly = docSource === 'created'
+  const isAIReviewFailed = docStatus === 'AI审核失败'
+  const isReadOnly = docSource === 'created' || (docSource === 'review' && docStatus !== '人工审核中')
+
+  // ── 提交审核 Modal state ──
+  const [showSubmitModal, setShowSubmitModal] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Department reviewers for submit modal
+  const departments = ['Branding', 'MA', 'Legal', 'RA'] as const
+  const [reviewerSelections, setReviewerSelections] = useState<Record<string, string>>({
+    Branding: '',
+    MA: '',
+    Legal: '',
+    RA: '',
+  })
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null)
+  const mockReviewers = ['段威丞', '李明', '王芳', '张伟']
 
   // ── Tabs ──
   const [activeTab, setActiveTab] = useState<'批注' | '历史版本'>('批注')
@@ -207,16 +191,126 @@ const ViewDocument: React.FC = () => {
 
   // ── Annotations ──
   const [annotations, setAnnotations] = useState<AnnotationData[]>(
-    isAIReviewing ? [] : initialAnnotations
+    isAIReviewing || isAIReviewFailed ? [] : initialAnnotations
   )
   const [activeAnnotation, setActiveAnnotation] = useState<string>('')
 
   // ── Pending selection (box-select to add) ──
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null)
   const [isAddingAnno, setIsAddingAnno] = useState(false)
+  const [addAnnoRiskIndex, setAddAnnoRiskIndex] = useState(0)
+  const [addAnnoRiskExpanded, setAddAnnoRiskExpanded] = useState(false)
+
+  const RISK_LEVELS = [
+    { label: '高风险', color: '#FA4D56', arrowColor: '#FFB3B8', bgColor: '#FFF1F1', hoverColor: '#FFE3E3', iconType: 'alert-fill' as const },
+    { label: '中风险', color: '#d69d00', arrowColor: '#ffc629', bgColor: '#fef6df', hoverColor: '#ffebb3', iconType: 'alert-line' as const },
+    { label: '低风险', color: '#4382f8', arrowColor: '#87b0fb', bgColor: '#f4f8ff', hoverColor: '#dce9ff' }
+  ]
+
+  // ── Review action state ──
+  type ReviewAction = '审核通过' | '返回修改' | '待补充' | '无需审核'
+  const [pendingReviewAction, setPendingReviewAction] = useState<ReviewAction | null>(null)
+  // Initialize from sessionStorage (or URL fallback) so re-entering a reviewed document preserves state
+  const [reviewResult, setReviewResult] = useState<ReviewAction | null>(() => {
+    if (rowId) {
+      try {
+        const results = JSON.parse(sessionStorage.getItem('review_results') || '{}') as Record<string, string>
+        if (results[rowId]) return results[rowId] as ReviewAction
+      } catch { /* ignore */ }
+    }
+    // Fallback: read from URL param (passed by Workbench for pre-reviewed docs)
+    if (urlReviewResult) return urlReviewResult as ReviewAction
+    return null
+  })
+
+  const handleConfirmReview = useCallback(() => {
+    if (!pendingReviewAction) return
+    setReviewResult(pendingReviewAction)
+    setPendingReviewAction(null)
+    // Persist review result to sessionStorage (for Workbench sync + page re-entry)
+    if (!rowId) return
+    try {
+      // Save reviewed row IDs for Workbench button change
+      const reviewed = JSON.parse(sessionStorage.getItem('reviewed_docs') || '[]') as string[]
+      if (!reviewed.includes(rowId)) {
+        reviewed.push(rowId)
+        sessionStorage.setItem('reviewed_docs', JSON.stringify(reviewed))
+      }
+      // Save the specific review action for ViewDocument re-entry
+      const results = JSON.parse(sessionStorage.getItem('review_results') || '{}') as Record<string, string>
+      results[rowId] = pendingReviewAction
+      sessionStorage.setItem('review_results', JSON.stringify(results))
+    } catch { /* ignore */ }
+  }, [pendingReviewAction, rowId])
+
+  // ── Zoom state ──
+  const [zoom, setZoom] = useState(1)
+  const [containerWidth, setContainerWidth] = useState(0)
+
+  // Dynamic maxZoom: PDF page can fill up to 90% of the container width
+  const maxZoom = useMemo(() => {
+    if (containerWidth <= 0) return 3
+    return Math.max(1, Math.floor((containerWidth * 0.9) / PAGE_WIDTH * 100) / 100)
+  }, [containerWidth])
+
+  // Track PDF area width for dynamic maxZoom (excludes cards column)
+  useEffect(() => {
+    const el = pdfAreaRef.current
+    if (!el) return
+    const measure = () => setContainerWidth(el.clientWidth)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  // Clamp zoom when maxZoom shrinks (e.g. window resize)
+  useEffect(() => {
+    setZoom(prev => Math.min(prev, maxZoom))
+  }, [maxZoom])
+
+  const handleZoomIn = useCallback(() => {
+    setZoom(prev => {
+      const next = ZOOM_LEVELS.find(l => l > prev + 0.001 && l <= maxZoom)
+      return next !== undefined ? next : Math.min(prev + ZOOM_STEP, maxZoom)
+    })
+  }, [maxZoom])
+
+  const handleZoomOut = useCallback(() => {
+    setZoom(prev => {
+      const levels = [...ZOOM_LEVELS].reverse()
+      const next = levels.find(l => l < prev - 0.001)
+      return next !== undefined ? next : Math.max(prev - ZOOM_STEP, ZOOM_MIN)
+    })
+  }, [])
+
+  const handleZoomReset = useCallback(() => {
+    setZoom(1)
+  }, [])
+
+  // ── Trackpad pinch-to-zoom (ctrlKey + wheel on macOS) ──
+  useEffect(() => {
+    const el = sharedScrollRef.current
+    if (!el) return
+
+    const handleWheel = (e: WheelEvent) => {
+      // macOS trackpad pinch sends ctrlKey + deltaY
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      const delta = -e.deltaY * 0.01
+      setZoom(prev => {
+        const next = Math.round((prev + delta) * 100) / 100
+        return Math.max(ZOOM_MIN, Math.min(maxZoom, next))
+      })
+    }
+
+    el.addEventListener('wheel', handleWheel, { passive: false })
+    return () => el.removeEventListener('wheel', handleWheel)
+  }, [maxZoom])
 
   // ── Refs ──
   const sharedScrollRef = useRef<HTMLDivElement>(null)
+  const pdfAreaRef = useRef<HTMLDivElement>(null)
   const pdfColumnRef = useRef<HTMLDivElement>(null)
   const highlightRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const annoCardRefs = useRef<Record<string, HTMLDivElement | null>>({})
@@ -246,11 +340,16 @@ const ViewDocument: React.FC = () => {
   const [pdfColumnHeight, setPdfColumnHeight] = useState(0)
   const stickyTabsRef = useRef<HTMLDivElement>(null)
   const [tabsHeight, setTabsHeight] = useState(0)
+  // ── PDF column center X for action bar positioning ──
+  const [pdfColumnCenterX, setPdfColumnCenterX] = useState<number | null>(null)
 
   useEffect(() => {
     const measure = () => {
       if (pdfColumnRef.current) {
+        // Inner element has height: auto; transform scale doesn't affect offsetHeight
         setPdfColumnHeight(pdfColumnRef.current.offsetHeight)
+        const rect = pdfColumnRef.current.getBoundingClientRect()
+        setPdfColumnCenterX(rect.left + rect.width / 2)
       }
       if (stickyTabsRef.current) {
         setTabsHeight(stickyTabsRef.current.offsetHeight)
@@ -260,8 +359,9 @@ const ViewDocument: React.FC = () => {
     const ro = new ResizeObserver(measure)
     if (pdfColumnRef.current) ro.observe(pdfColumnRef.current)
     if (stickyTabsRef.current) ro.observe(stickyTabsRef.current)
-    return () => ro.disconnect()
-  }, [])
+    window.addEventListener('resize', measure)
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure) }
+  }, [zoom])
 
   // ── ResizeObserver: track actual card heights for collision resolution ──
   useEffect(() => {
@@ -288,7 +388,7 @@ const ViewDocument: React.FC = () => {
     })
 
     return () => ro.disconnect()
-  }, [annotations, isAddingAnno])
+  }, [annotations, isAddingAnno, zoom])
 
   // (updateDashedLines defined after filteredAnnotations)
 
@@ -300,12 +400,12 @@ const ViewDocument: React.FC = () => {
     if (!pdfEl) return
 
     const pdfRect = pdfEl.getBoundingClientRect()
-    // getBoundingClientRect already includes scroll offset, no need to add scrollTop
-    const rawX = e.clientX - pdfRect.left
-    const rawY = e.clientY - pdfRect.top
+    // getBoundingClientRect returns scaled (screen) coords; convert to base coords
+    const rawX = (e.clientX - pdfRect.left) / zoom
+    const rawY = (e.clientY - pdfRect.top) / zoom
 
     // Pages are centered within the column, calculate page left offset
-    const pageLeftOffset = (pdfRect.width - PAGE_WIDTH) / 2
+    const pageLeftOffset = (pdfRect.width / zoom - PAGE_WIDTH) / 2
     const clickX = rawX - pageLeftOffset
     // Subtract column padding-top so clickY is relative to first page start
     const clickY = rawY - COLUMN_PADDING_TOP
@@ -323,7 +423,7 @@ const ViewDocument: React.FC = () => {
     setIsAddingAnno(false)
     setPendingSelection(null)
     setActiveAnnotation('')
-  }, [isReadOnly])
+  }, [isReadOnly, zoom])
 
   const handlePdfMouseMove = useCallback((e: React.MouseEvent) => {
     if (!isDraggingRef.current || !dragStartRef.current) return
@@ -331,9 +431,9 @@ const ViewDocument: React.FC = () => {
     if (!pdfEl) return
 
     const pdfRect = pdfEl.getBoundingClientRect()
-    const pageLeftOffset = (pdfRect.width - PAGE_WIDTH) / 2
-    const currentX = e.clientX - pdfRect.left - pageLeftOffset
-    const currentY = e.clientY - pdfRect.top - COLUMN_PADDING_TOP
+    const pageLeftOffset = (pdfRect.width / zoom - PAGE_WIDTH) / 2
+    const currentX = (e.clientX - pdfRect.left) / zoom - pageLeftOffset
+    const currentY = (e.clientY - pdfRect.top) / zoom - COLUMN_PADDING_TOP
 
     const { page, x, y } = dragStartRef.current
     const pageRelY = currentY - getPageTop(page)
@@ -345,7 +445,7 @@ const ViewDocument: React.FC = () => {
       endX: Math.max(x, currentX),
       endY: Math.max(y, pageRelY),
     })
-  }, [])
+  }, [zoom])
 
   const handlePdfMouseUp = useCallback(() => {
     if (!isDraggingRef.current) return
@@ -382,16 +482,21 @@ const ViewDocument: React.FC = () => {
       time: new Date().toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }).replace('/', '-') +
         ' ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
       content: text,
+      risk: (['high', 'medium', 'low'] as const)[addAnnoRiskIndex] ?? 'high',
     }
     setAnnotations(prev => [...prev, newAnno])
     setPendingSelection(null)
     setIsAddingAnno(false)
+    setAddAnnoRiskIndex(0)
+    setAddAnnoRiskExpanded(false)
     setActiveAnnotation(newAnno.id)
-  }, [pendingSelection])
+  }, [pendingSelection, addAnnoRiskIndex])
 
   const handleCancelAdd = useCallback(() => {
     setPendingSelection(null)
     setIsAddingAnno(false)
+    setAddAnnoRiskIndex(0)
+    setAddAnnoRiskExpanded(false)
   }, [])
 
   // ── Delete annotation ──
@@ -403,6 +508,10 @@ const ViewDocument: React.FC = () => {
   // ── Edit annotation content ──
   const handleEditAnnotation = useCallback((annoId: string, text: string) => {
     setAnnotations(prev => prev.map(a => a.id === annoId ? { ...a, content: text } : a))
+  }, [])
+
+  const handleRiskChange = useCallback((annoId: string, risk: 'high' | 'medium' | 'low') => {
+    setAnnotations(prev => prev.map(a => a.id === annoId ? { ...a, risk } : a))
   }, [])
 
   // ── Filter annotations by sub-tab ──
@@ -499,33 +608,33 @@ const ViewDocument: React.FC = () => {
     // PDF column abs origin is at toolbarHeight below wrapper; cards container abs origin is at tabsHeight below wrapper
     // So card top in cards-container space = highlight center + PDF_TOOLBAR_HEIGHT - tabsHeight - padding_offset
     filteredAnnotations.forEach(anno => {
-      const hlCenterY = getPageTop(anno.page) + anno.rect.y + anno.rect.height / 2 + COLUMN_PADDING_TOP + PDF_TOOLBAR_HEIGHT - tabsHeight
+      const hlCenterY = (getPageTop(anno.page) + anno.rect.y + anno.rect.height / 2 + COLUMN_PADDING_TOP) * zoom + PDF_TOOLBAR_HEIGHT - tabsHeight
       const height = cardHeights[anno.id] ?? estimateCardHeight(anno)
       cards.push({ id: anno.id, top: hlCenterY - height / 2 - 12, height })
     })
 
     // InputBox card — positioned to align with selection rect center in PDF column
     if (isAddingAnno && pendingSelection) {
-      const selCenterY = getPageTop(pendingSelection.page)
+      const selCenterY = (getPageTop(pendingSelection.page)
         + (pendingSelection.startY + pendingSelection.endY) / 2
-        + COLUMN_PADDING_TOP + PDF_TOOLBAR_HEIGHT - tabsHeight
+        + COLUMN_PADDING_TOP) * zoom + PDF_TOOLBAR_HEIGHT - tabsHeight
       const height = cardHeights['__addAnno__'] ?? ADD_ANNO_HEIGHT
       cards.push({ id: '__addAnno__', top: selCenterY - height / 2 - 12, height })
     }
 
     // Resolve collisions using the layout engine
     return resolveCardPositions(cards)
-  }, [filteredAnnotations, tabsHeight, isAddingAnno, pendingSelection, cardHeights])
+  }, [filteredAnnotations, tabsHeight, isAddingAnno, pendingSelection, cardHeights, zoom])
 
   // ── Annotation activate handler ──
   const handleActivateAnnotation = useCallback((id: string) => {
     setActiveAnnotation(prev => prev === id ? '' : id)
     const anno = annotations.find(a => a.id === id)
     if (anno && sharedScrollRef.current) {
-      const targetTop = getPageTop(anno.page) + anno.rect.y - 100
+      const targetTop = (getPageTop(anno.page) + anno.rect.y) * zoom - 100
       sharedScrollRef.current.scrollTo({ top: targetTop, behavior: 'smooth' })
     }
-  }, [annotations])
+  }, [annotations, zoom])
 
   // ── Sorted annotations for navigation ──
   const sortedAnnotations = useMemo(() =>
@@ -557,13 +666,13 @@ const ViewDocument: React.FC = () => {
     const viewportCenter = container.scrollTop + container.clientHeight / 2
 
     let nextIdx = sortedAnnotations.findIndex(anno => {
-      const annoCenterY = getPageTop(anno.page) + anno.rect.y + anno.rect.height / 2 + COLUMN_PADDING_TOP
+      const annoCenterY = (getPageTop(anno.page) + anno.rect.y + anno.rect.height / 2 + COLUMN_PADDING_TOP) * zoom
       return annoCenterY >= viewportCenter
     })
 
     if (nextIdx === -1) nextIdx = 0
     if (nextIdx === 0 && sortedAnnotations.length > 0) {
-      const firstCenterY = getPageTop(sortedAnnotations[0].page) + sortedAnnotations[0].rect.y + sortedAnnotations[0].rect.height / 2 + COLUMN_PADDING_TOP
+      const firstCenterY = (getPageTop(sortedAnnotations[0].page) + sortedAnnotations[0].rect.y + sortedAnnotations[0].rect.height / 2 + COLUMN_PADDING_TOP) * zoom
       if (firstCenterY >= container.scrollTop) {
         nextIdx = 1 % sortedAnnotations.length
       }
@@ -574,16 +683,16 @@ const ViewDocument: React.FC = () => {
       prevAnno: sortedAnnotations[prevIdx],
       nextAnno: sortedAnnotations[nextIdx],
     }
-  }, [sortedAnnotations, activeAnnotation, scrollTop])
+  }, [sortedAnnotations, activeAnnotation, scrollTop, zoom])
 
   const navigateToAnnotation = useCallback((anno: AnnotationData) => {
     if (!sharedScrollRef.current) return
     const container = sharedScrollRef.current
-    const annoCenterY = getPageTop(anno.page) + anno.rect.y + anno.rect.height / 2 + COLUMN_PADDING_TOP
+    const annoCenterY = (getPageTop(anno.page) + anno.rect.y + anno.rect.height / 2 + COLUMN_PADDING_TOP) * zoom
     const targetScroll = annoCenterY - container.clientHeight / 2
     container.scrollTo({ top: Math.max(0, targetScroll), behavior: 'smooth' })
     setActiveAnnotation(anno.id)
-  }, [])
+  }, [zoom])
 
   // ═══════════════════════════════════════════════════════
   // RENDER
@@ -591,7 +700,31 @@ const ViewDocument: React.FC = () => {
   return (
     <div style={{ width: '100vw', height: '100vh', backgroundColor: '#FFFFFF', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* TopBar */}
-      <TopBar status={docStatus as any} />
+      <TopBar status={docStatus as any} reviewResult={reviewResult ?? undefined} />
+
+      {/* ── AI审核失败 Warning Banner ── */}
+      {isAIReviewFailed && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 4,
+          padding: '8px 70px',
+          backgroundColor: '#FFF1F1',
+          flexShrink: 0,
+        }}>
+          {/* Error warning icon */}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm0-2a8 8 0 100-16 8 8 0 000 16zm-1-5h2v2h-2v-2zm0-8h2v6h-2V7z" fill="#FA4D56"/>
+          </svg>
+          <span style={{
+            fontSize: 14,
+            color: '#FA4D56',
+            fontFamily: "'PingFang SC', sans-serif",
+            fontWeight: 400,
+          }}>由于XXXX，AI审核失败，请重新上传或重试</span>
+        </div>
+      )}
 
       {/* Main content wrapper (relative for SVG overlay) */}
       <div ref={mainContentRef} style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
@@ -614,20 +747,23 @@ const ViewDocument: React.FC = () => {
                 key={i}
                 onClick={() => {
                   if (sharedScrollRef.current) {
-                    sharedScrollRef.current.scrollTo({ top: getPageTop(i), behavior: 'smooth' })
+                    sharedScrollRef.current.scrollTo({ top: getPageTop(i) * zoom, behavior: 'smooth' })
                   }
                 }}
                 style={{
                   width: '61px',
                   height: '76px',
-                  backgroundColor: '#D9D9D9',
                   borderRadius: '2px',
                   flexShrink: 0,
                   cursor: 'pointer',
                   border: '2px solid transparent',
                   transition: 'border-color 0.2s',
+                  overflow: 'hidden',
+                  backgroundColor: '#F5F5F5',
                 }}
-              />
+              >
+                <PdfThumbnail pageIndex={i} />
+              </div>
             ))}
           </div>
         </div>
@@ -646,12 +782,12 @@ const ViewDocument: React.FC = () => {
             display: 'flex',
             flex: 1,
             overflowY: 'auto',
-            overflowX: 'hidden',
+            overflowX: 'auto',
             minHeight: 0,
           }}
         >
           {/* PDF area wrapper: toolbar + PDF pages (side by side with cards column) */}
-          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, alignSelf: 'flex-start' }}>
+          <div ref={pdfAreaRef} style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, alignSelf: 'flex-start' }}>
             {/* PDF Toolbar (sticky at top) */}
             <div
               style={{
@@ -671,12 +807,35 @@ const ViewDocument: React.FC = () => {
             >
               {!isAIReviewing && (
                 <>
-                  <span style={{ fontSize: 13, color: '#666', cursor: 'pointer' }}>−</span>
-                  <span style={{ fontSize: 13, color: '#333' }}>100%</span>
-                  <span style={{ fontSize: 13, color: '#666', cursor: 'pointer' }}>+</span>
+                  <span
+                    onClick={handleZoomOut}
+                    onMouseEnter={e => { (e.currentTarget as HTMLSpanElement).style.backgroundColor = '#F5F5F5' }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLSpanElement).style.backgroundColor = 'transparent' }}
+                    style={{
+                      fontSize: 16, color: zoom <= ZOOM_MIN ? '#BFBFBF' : '#666', cursor: zoom <= ZOOM_MIN ? 'default' : 'pointer',
+                      width: 24, height: 24, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      borderRadius: 4, transition: 'background-color 0.15s', userSelect: 'none',
+                      pointerEvents: zoom <= ZOOM_MIN ? 'none' : 'auto',
+                    }}
+                  >−</span>
+                  <span
+                    onClick={handleZoomReset}
+                    style={{ fontSize: 13, color: '#666', cursor: 'pointer', minWidth: 40, textAlign: 'center', userSelect: 'none' }}
+                  >{Math.round(zoom * 100)}%</span>
+                  <span
+                    onClick={handleZoomIn}
+                    onMouseEnter={e => { (e.currentTarget as HTMLSpanElement).style.backgroundColor = '#F5F5F5' }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLSpanElement).style.backgroundColor = 'transparent' }}
+                    style={{
+                      fontSize: 16, color: zoom >= maxZoom ? '#BFBFBF' : '#666', cursor: zoom >= maxZoom ? 'default' : 'pointer',
+                      width: 24, height: 24, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      borderRadius: 4, transition: 'background-color 0.15s', userSelect: 'none',
+                      pointerEvents: zoom >= maxZoom ? 'none' : 'auto',
+                    }}
+                  >+</span>
                   <div style={{ width: 1, height: 20, backgroundColor: '#E5E5E5' }} />
                   <span style={{ fontSize: 13, color: '#666', cursor: 'pointer' }}>上一页</span>
-                  <span style={{ fontSize: 13, color: '#333' }}>1 / {mockPages.length}</span>
+                  <span style={{ fontSize: 13, color: '#666' }}>1 / {mockPages.length}</span>
                   <span style={{ fontSize: 13, color: '#666', cursor: 'pointer' }}>下一页</span>
                   {/* Spacer to push nav buttons to the right */}
                   <div style={{ flex: 1 }} />
@@ -701,10 +860,10 @@ const ViewDocument: React.FC = () => {
                   }}
                 >
                   <svg width={16} height={16} viewBox="0 0 16 16" fill="none">
-                    <path d="M11.39 9.45313L9.70902 11.3438H14.6667V12.6771H9.70902L11.39 14.5677L10.3939 15.4531L7.33337 12.0104L10.3939 8.56771L11.39 9.45313Z" fill={prevAnno ? '#333333' : '#BFBFBF'} />
-                    <path d="M14 2C14.3682 2 14.6667 2.29848 14.6667 2.66667V7.33333H13.3334V3.33333H2.66671V12.2565L3.84184 11.3333H6.00004V12.6667H4.30277L1.33337 15V2.66667C1.33337 2.29848 1.63185 2 2.00004 2H14Z" fill={prevAnno ? '#333333' : '#BFBFBF'} />
+                    <path d="M11.39 9.45313L9.70902 11.3438H14.6667V12.6771H9.70902L11.39 14.5677L10.3939 15.4531L7.33337 12.0104L10.3939 8.56771L11.39 9.45313Z" fill={prevAnno ? '#666666' : '#BFBFBF'} />
+                    <path d="M14 2C14.3682 2 14.6667 2.29848 14.6667 2.66667V7.33333H13.3334V3.33333H2.66671V12.2565L3.84184 11.3333H6.00004V12.6667H4.30277L1.33337 15V2.66667C1.33337 2.29848 1.63185 2 2.00004 2H14Z" fill={prevAnno ? '#666666' : '#BFBFBF'} />
                   </svg>
-                  <span style={{ fontSize: 12, color: prevAnno ? '#333333' : '#BFBFBF', fontFamily: "'PingFang SC', sans-serif" }}>上一条批注</span>
+                  <span style={{ fontSize: 12, color: prevAnno ? '#666666' : '#BFBFBF', fontFamily: "'PingFang SC', sans-serif" }}>上一条批注</span>
                 </div>
 
                 {/* 下一条批注 */}
@@ -723,42 +882,63 @@ const ViewDocument: React.FC = () => {
                   }}
                 >
                   <svg width={16} height={16} viewBox="0 0 16 16" fill="none">
-                    <path d="M14.6667 12.0104L11.6062 15.4531L10.6101 14.5677L12.2911 12.6771H7.33337V11.3438H12.2911L10.6101 9.45313L11.6062 8.56771L14.6667 12.0104Z" fill={nextAnno ? '#333333' : '#BFBFBF'} />
-                    <path d="M14 2C14.3682 2 14.6667 2.29848 14.6667 2.66667V7.33333H13.3334V3.33333H2.66671V12.2565L3.84184 11.3333H6.00004V12.6667H4.30277L1.33337 15V2.66667C1.33337 2.29848 1.63185 2 2.00004 2H14Z" fill={nextAnno ? '#333333' : '#BFBFBF'} />
+                    <path d="M14.6667 12.0104L11.6062 15.4531L10.6101 14.5677L12.2911 12.6771H7.33337V11.3438H12.2911L10.6101 9.45313L11.6062 8.56771L14.6667 12.0104Z" fill={nextAnno ? '#666666' : '#BFBFBF'} />
+                    <path d="M14 2C14.3682 2 14.6667 2.29848 14.6667 2.66667V7.33333H13.3334V3.33333H2.66671V12.2565L3.84184 11.3333H6.00004V12.6667H4.30277L1.33337 15V2.66667C1.33337 2.29848 1.63185 2 2.00004 2H14Z" fill={nextAnno ? '#666666' : '#BFBFBF'} />
                   </svg>
-                  <span style={{ fontSize: 12, color: nextAnno ? '#333333' : '#BFBFBF', fontFamily: "'PingFang SC', sans-serif" }}>下一条批注</span>
+                  <span style={{ fontSize: 12, color: nextAnno ? '#666666' : '#BFBFBF', fontFamily: "'PingFang SC', sans-serif" }}>下一条批注</span>
                 </div>
               </div>
             </div>
 
-            {/* ── PDF pages column ── */}
-            <div
-              ref={pdfColumnRef}
-              onMouseDown={handlePdfMouseDown}
-              style={{
-                flex: 1,
-                position: 'relative',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                padding: `${COLUMN_PADDING_TOP}px 40px 60px`,
-                gap: `${PAGE_GAP}px`,
-                backgroundColor: '#F0F0F0',
-                minWidth: 0,
-                userSelect: 'none',
-              }}
-            >
+            {/* ── PDF pages column (zoom sizer wrapper) ── */}
+            <div style={{
+              width: '100%',
+              height: pdfColumnHeight > 0 ? pdfColumnHeight * zoom : undefined,
+              flexShrink: 0,
+              minWidth: 0,
+              backgroundColor: '#F0F0F0',
+            }}>
+              <div
+                ref={pdfColumnRef}
+                onMouseDown={handlePdfMouseDown}
+                style={{
+                  width: '100%',
+                  position: 'relative',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  padding: `${COLUMN_PADDING_TOP}px 40px 60px`,
+                  gap: `${PAGE_GAP}px`,
+                  userSelect: 'none',
+                  transform: zoom !== 1 ? `scale(${zoom})` : undefined,
+                  transformOrigin: 'top center',
+                }}
+              >
               {/* Pages */}
-              {mockPages.map((blocks, i) => (
-                <MockPage key={i} blocks={blocks} pageIndex={i} />
+              {mockPages.map((_, i) => (
+                <div
+                  key={i}
+                  style={{
+                    width: PAGE_WIDTH,
+                    height: PAGE_HEIGHT,
+                    flexShrink: 0,
+                    boxShadow: '1px 2px 4px 0px rgba(0,0,0,0.08), 0px 3px 8px 0px rgba(0,0,0,0.05)',
+                    margin: '0 auto',
+                    overflow: 'hidden',
+                    backgroundColor: '#FFFFFF',
+                  }}
+                >
+                  <PdfPage pageIndex={i} />
+                </div>
               ))}
 
               {/* Highlight rectangles */}
               {annotations.map(anno => {
                 const pageTop = getPageTop(anno.page)
                 const isActive = activeAnnotation === anno.id
-                const color = anno.type === 'AI' ? 'rgba(42,109,231,0.15)' : 'rgba(69,191,101,0.15)'
-                const activeColor = anno.type === 'AI' ? 'rgba(42,109,231,0.35)' : 'rgba(69,191,101,0.35)'
+                const deptColor = DEPT_COLORS[anno.department ?? 'Legal'] ?? DEPT_COLORS.Legal
+                const bgColor = hexToRgba(deptColor, 0.15)
+                const activeBgColor = hexToRgba(deptColor, 0.35)
                 return (
                   <div
                     key={`hl-${anno.id}`}
@@ -773,10 +953,10 @@ const ViewDocument: React.FC = () => {
                       top: `${pageTop + anno.rect.y + COLUMN_PADDING_TOP}px`,
                       width: anno.rect.width,
                       height: anno.rect.height,
-                      backgroundColor: isActive ? activeColor : color,
+                      backgroundColor: isActive ? activeBgColor : bgColor,
                       border: isActive
-                        ? `2px solid ${anno.type === 'AI' ? '#2A6DE7' : '#45BF65'}`
-                        : '1px solid transparent',
+                        ? `2px solid ${deptColor}`
+                        : `1px dashed ${deptColor}`,
                       borderRadius: 2,
                       cursor: 'pointer',
                       pointerEvents: 'auto',
@@ -806,9 +986,11 @@ const ViewDocument: React.FC = () => {
                 />
               )}
             </div>
+            </div>
           </div>
 
-            {/* ── Annotation cards column (inside same scroll) ── */}
+            {/* ── Annotation cards column (inside same scroll, only when 批注 tab is active) ── */}
+            {activeTab === '批注' && (
             <div
               style={{
                 width: '397px',
@@ -822,52 +1004,50 @@ const ViewDocument: React.FC = () => {
             >
               {/* Tabs (sticky at top of annotation column) */}
               <div ref={stickyTabsRef} style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#FFFFFF', position: 'sticky', top: 0, zIndex: 15 }}>
-                <div style={{ display: 'flex', flexDirection: 'column', padding: '16px 24px 0', gap: '10px', borderBottom: activeTab === '批注' ? '1px solid #E5E5E5' : 'none' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', padding: '16px 24px 0', gap: '10px', borderBottom: '1px solid #E5E5E5' }}>
                   <div style={{ display: 'flex', padding: '2px', gap: '2px', backgroundColor: '#F5F5F5', borderRadius: '8px' }}>
                     <div
                       onClick={() => setActiveTab('批注')}
                       style={{
                         flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center',
                         padding: '8px 0', borderRadius: '6px',
-                        backgroundColor: activeTab === '批注' ? '#FFFFFF' : 'transparent',
-                        boxShadow: activeTab === '批注' ? '1px 2px 4px 0px rgba(0,0,0,0.08), 0px 3px 8px 0px rgba(0,0,0,0.05)' : 'none',
+                        backgroundColor: '#FFFFFF',
+                        boxShadow: 'none',
                         cursor: 'pointer',
                       }}
                     >
-                      <span style={{ fontSize: 14, fontWeight: activeTab === '批注' ? 600 : 400, color: activeTab === '批注' ? '#333' : '#666', fontFamily: "'PingFang SC', sans-serif" }}>批注</span>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: '#333', fontFamily: "'PingFang SC', sans-serif" }}>批注</span>
                     </div>
                     <div
                       onClick={() => setActiveTab('历史版本')}
                       style={{
                         flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center',
                         padding: '8px 0', borderRadius: '6px',
-                        backgroundColor: activeTab === '历史版本' ? '#FFFFFF' : 'transparent',
-                        boxShadow: activeTab === '历史版本' ? '1px 2px 4px 0px rgba(0,0,0,0.08), 0px 3px 8px 0px rgba(0,0,0,0.05)' : 'none',
+                        backgroundColor: 'transparent',
+                        boxShadow: 'none',
                         cursor: 'pointer',
                       }}
                     >
-                      <span style={{ fontSize: 14, fontWeight: activeTab === '历史版本' ? 600 : 400, color: activeTab === '历史版本' ? '#333' : '#666', fontFamily: "'PingFang SC', sans-serif" }}>历史版本</span>
+                      <span style={{ fontSize: 14, fontWeight: 400, color: '#666', fontFamily: "'PingFang SC', sans-serif" }}>历史版本</span>
                     </div>
                   </div>
 
-                  {activeTab === '批注' && (
-                    <div style={{ display: 'flex', justifyContent: 'center' }}>
-                      {(['全部', 'AI', '人工', '本部门'] as const).map(tab => (
-                        <div
-                          key={tab}
-                          onClick={() => setActiveSubTab(tab)}
-                          style={{
-                            display: 'flex', justifyContent: 'center', alignItems: 'center',
-                            padding: '14px 16px',
-                            borderBottom: activeSubTab === tab ? '2px solid #2A6DE7' : '2px solid transparent',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          <span style={{ fontSize: 13, fontWeight: activeSubTab === tab ? 600 : 400, color: activeSubTab === tab ? '#2A6DE7' : '#333', textAlign: 'center', fontFamily: "'PingFang SC', sans-serif" }}>{tab}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <div style={{ display: 'flex', justifyContent: 'center' }}>
+                    {(['全部', 'AI', '人工', '本部门'] as const).map(tab => (
+                      <div
+                        key={tab}
+                        onClick={() => setActiveSubTab(tab)}
+                        style={{
+                          display: 'flex', justifyContent: 'center', alignItems: 'center',
+                          padding: '14px 16px',
+                          borderBottom: activeSubTab === tab ? '2px solid #2A6DE7' : '2px solid transparent',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <span style={{ fontSize: 13, fontWeight: activeSubTab === tab ? 600 : 400, color: activeSubTab === tab ? '#2A6DE7' : '#333', textAlign: 'center', fontFamily: "'PingFang SC', sans-serif" }}>{tab}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -878,90 +1058,92 @@ const ViewDocument: React.FC = () => {
                 style={{
                   position: 'relative',
                   flexShrink: 0,
-                  height: pdfColumnHeight > 0 ? pdfColumnHeight : undefined,
+                  height: pdfColumnHeight > 0 ? pdfColumnHeight * zoom : undefined,
                   padding: '16px',
                 }}
               >
-                {activeTab === '批注' ? (
-                  <>
-                    {isAddingAnno && pendingSelection && (() => {
-                      const addAnnoTop = resolvedCardTops['__addAnno__'] ?? (
-                        getPageTop(pendingSelection.page)
-                        + (pendingSelection.startY + pendingSelection.endY) / 2
-                        + COLUMN_PADDING_TOP + PDF_TOOLBAR_HEIGHT - tabsHeight - 12
-                        - (cardHeights['__addAnno__'] ?? ADD_ANNO_HEIGHT) / 2
-                      )
-                      return (
-                        <div
-                          data-card-id="__addAnno__"
-                          ref={el => { annoCardRefs.current['__addAnno__'] = el }}
-                          onClick={(e) => e.stopPropagation()} style={{
+                <>
+                  {isAddingAnno && pendingSelection && (() => {
+                    const addAnnoTop = resolvedCardTops['__addAnno__'] ?? Math.max(8,
+                      (getPageTop(pendingSelection.page)
+                      + (pendingSelection.startY + pendingSelection.endY) / 2
+                      + COLUMN_PADDING_TOP) * zoom + PDF_TOOLBAR_HEIGHT - tabsHeight - 12
+                      - (cardHeights['__addAnno__'] ?? ADD_ANNO_HEIGHT) / 2
+                    )
+                    return (
+                      <div
+                        data-card-id="__addAnno__"
+                        ref={el => { annoCardRefs.current['__addAnno__'] = el }}
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()} style={{
+                        position: 'absolute',
+                        top: addAnnoTop,
+                        left: 16,
+                        right: 16,
+                        zIndex: 10,
+                      }}>
+                        <InputBox
+                          variant={addAnnoRiskExpanded ? 'risk-expanded' : 'risk-collapsed'}
+                          riskLevels={RISK_LEVELS}
+                          selectedRiskIndex={addAnnoRiskIndex}
+                          onRiskSelect={(idx) => {
+                            setAddAnnoRiskIndex(idx)
+                            setAddAnnoRiskExpanded(false)
+                          }}
+                          onToggleRisk={() => setAddAnnoRiskExpanded(prev => !prev)}
+                          onSubmit={handleAddAnnotation}
+                          onCancel={handleCancelAdd}
+                        />
+                      </div>
+                    )
+                  })()}
+                  {filteredAnnotations.map(anno => {
+                    const cardTop = resolvedCardTops[anno.id] ?? Math.max(8,
+                      (getPageTop(anno.page) + anno.rect.y + anno.rect.height / 2
+                      + COLUMN_PADDING_TOP) * zoom + PDF_TOOLBAR_HEIGHT - tabsHeight - 12
+                      - (cardHeights[anno.id] ?? estimateCardHeight(anno)) / 2
+                    )
+                    return (
+                      <div
+                        key={anno.id}
+                        data-card-id={anno.id}
+                        ref={el => { annoCardRefs.current[anno.id] = el }}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
                           position: 'absolute',
-                          top: addAnnoTop,
+                          top: cardTop,
                           left: 16,
                           right: 16,
-                          zIndex: 10,
-                        }}>
-                          <InputBox
-                            variant="adding"
-                            onSubmit={handleAddAnnotation}
-                            onCancel={handleCancelAdd}
-                          />
-                        </div>
-                      )
-                    })()}
-                    {filteredAnnotations.map(anno => {
-                      const cardTop = resolvedCardTops[anno.id] ?? (
-                        getPageTop(anno.page) + anno.rect.y + anno.rect.height / 2
-                        + COLUMN_PADDING_TOP + PDF_TOOLBAR_HEIGHT - tabsHeight - 12
-                        - (cardHeights[anno.id] ?? estimateCardHeight(anno)) / 2
-                      )
-                      return (
-                        <div
-                          key={anno.id}
-                          data-card-id={anno.id}
-                          ref={el => { annoCardRefs.current[anno.id] = el }}
-                          onClick={(e) => e.stopPropagation()}
-                          style={{
-                            position: 'absolute',
-                            top: cardTop,
-                            left: 16,
-                            right: 16,
-                            zIndex: activeAnnotation === anno.id ? 6 : 1,
-                          }}
-                        >
-                          <Annotation
-                            variant={anno.type === 'AI' ? 'AI' : 'manual'}
-                            department={anno.department as any}
-                            userName={anno.userName}
-                            time={anno.time}
-                            content={anno.content}
-                            issueTitle={anno.issueTitle}
-                            issueContent={anno.issueContent}
-                            suggestionTitle={anno.suggestionTitle}
-                            suggestionContent={anno.suggestionContent}
-                            risk={anno.risk}
-                            interactive
-                            readOnly={isReadOnly}
-                            id={anno.id}
-                            isActive={activeAnnotation === anno.id}
-                            onActivate={handleActivateAnnotation}
-                            onDelete={handleDeleteAnnotation}
-                            onEdit={handleEditAnnotation}
-                          />
-                        </div>
-                      )
-                    })}
-                  </>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <VersionCard variant="current" version="V3" department="Branding" userName="段威丞" time="2026-05-19 15:20" tagVariant="人工审核中" />
-                    <VersionCard variant="old" version="V2" department="RA" userName="段威丞" time="2026-05-19 15:20" tagVariant="待补充" />
-                    <VersionCard variant="old" version="V1" department="RA" userName="段威丞" time="2026-05-19 15:20" tagVariant="返回修改" />
-                  </div>
-                )}
+                          zIndex: activeAnnotation === anno.id ? 6 : 1,
+                        }}
+                      >
+                        <Annotation
+                          variant={anno.type === 'AI' ? 'AI' : 'manual'}
+                          department={anno.department as any}
+                          userName={anno.userName}
+                          time={anno.time}
+                          content={anno.content}
+                          issueTitle={anno.issueTitle}
+                          issueContent={anno.issueContent}
+                          suggestionTitle={anno.suggestionTitle}
+                          suggestionContent={anno.suggestionContent}
+                          risk={anno.risk}
+                          interactive
+                          readOnly={isReadOnly}
+                          id={anno.id}
+                          isActive={activeAnnotation === anno.id}
+                          onActivate={handleActivateAnnotation}
+                          onDelete={handleDeleteAnnotation}
+                          onEdit={handleEditAnnotation}
+                          onRiskChange={handleRiskChange}
+                        />
+                      </div>
+                    )
+                  })}
+                </>
               </div>
             </div>
+            )}
 
             {/* ─── SVG Dashed Lines Overlay (all visible annotations + pending add) ─── */}
             {(Object.keys(dashedLines).length > 0 || pendingDashedLine) && (
@@ -980,7 +1162,7 @@ const ViewDocument: React.FC = () => {
                   const line = dashedLines[anno.id]
                   if (!line) return null
                   const isActive = activeAnnotation === anno.id
-                  const color = anno.type === 'AI' ? '#2A6DE7' : '#45BF65'
+                  const color = DEPT_COLORS[anno.department ?? 'Legal'] ?? DEPT_COLORS.Legal
                   // 两段式折线：水平→转折→卡片
                   // 转折点：距卡片左侧80px，Y轴与高亮区中心对齐
                   const turnX = line.x2 - 80
@@ -1011,7 +1193,450 @@ const ViewDocument: React.FC = () => {
               </svg>
             )}
           </div>
+
+        {/* ── 历史版本面板 (独立于 sharedScrollRef，不跟随 PDF 滚动) ── */}
+        {activeTab === '历史版本' && (
+          <div
+            style={{
+              width: '397px',
+              flexShrink: 0,
+              backgroundColor: '#FFFFFF',
+              borderLeft: '1px solid #E5E5E5',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            {/* Tabs */}
+            <div style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#FFFFFF', flexShrink: 0 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', padding: '16px 24px 0', gap: '10px' }}>
+                <div style={{ display: 'flex', padding: '2px', gap: '2px', backgroundColor: '#F5F5F5', borderRadius: '8px' }}>
+                  <div
+                    onClick={() => setActiveTab('批注')}
+                    style={{
+                      flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center',
+                      padding: '8px 0', borderRadius: '6px',
+                      backgroundColor: 'transparent',
+                      boxShadow: 'none',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span style={{ fontSize: 14, fontWeight: 400, color: '#666', fontFamily: "'PingFang SC', sans-serif" }}>批注</span>
+                  </div>
+                  <div
+                    onClick={() => setActiveTab('历史版本')}
+                    style={{
+                      flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center',
+                      padding: '8px 0', borderRadius: '6px',
+                      backgroundColor: '#FFFFFF',
+                      boxShadow: 'none',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#333', fontFamily: "'PingFang SC', sans-serif" }}>历史版本</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Version cards - 独立滚动区域 */}
+            <div
+              className="no-scrollbar"
+              style={{
+                flex: 1,
+                overflowY: 'auto',
+                padding: '16px',
+                minHeight: 0,
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <VersionCard variant="current" version="V3" department="Branding" userName="段威丞" time="2026-05-19 15:20" tagVariant="人工审核中" />
+                <VersionCard variant="old" version="V2" department="RA" userName="段威丞" time="2026-05-19 15:20" tagVariant="待补充" />
+                <VersionCard variant="old" version="V1" department="RA" userName="段威丞" time="2026-05-19 15:20" tagVariant="返回修改" />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* ── 创建人 + AI审核完成 Action Bar ── */}
+      {docStatus === 'AI审核完成' && docSource === 'created' && pdfColumnCenterX !== null && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 36,
+            left: pdfColumnCenterX,
+            transform: 'translateX(-50%)',
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            padding: 8,
+            backgroundColor: '#FAFAFA',
+            border: '1px solid #F0F0F0',
+            borderRadius: 8,
+            boxShadow: '1px 2px 4px 0px rgba(0,0,0,0.08), 0px 3px 8px 0px rgba(0,0,0,0.05)',
+            zIndex: 100,
+          }}
+        >
+          <button
+            onClick={() => setShowSubmitModal(true)}
+            style={{
+              display: 'inline-flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              padding: '4px 15px',
+              borderRadius: 4,
+              backgroundColor: '#2A6DE7',
+              color: '#FFFFFF',
+              border: 'none',
+              fontSize: 14,
+              fontFamily: "'PingFang SC', sans-serif",
+              fontWeight: 400,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >提交审核</button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            style={{ display: 'none' }}
+            onChange={() => { /* handle file upload */ }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              display: 'inline-flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              padding: '4px 15px',
+              borderRadius: 4,
+              backgroundColor: '#FFFFFF',
+              color: '#333333',
+              border: '1px solid #CCCCCC',
+              fontSize: 14,
+              fontFamily: "'PingFang SC', sans-serif",
+              fontWeight: 400,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >重新上传</button>
+        </div>
+      )}
+
+      {/* ── 创建人 + 待补充 Action Bar ── */}
+      {docStatus === '待补充' && docSource === 'created' && pdfColumnCenterX !== null && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 36,
+            left: pdfColumnCenterX,
+            transform: 'translateX(-50%)',
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            padding: 8,
+            backgroundColor: '#FAFAFA',
+            border: '1px solid #F0F0F0',
+            borderRadius: 8,
+            boxShadow: '1px 2px 4px 0px rgba(0,0,0,0.08), 0px 3px 8px 0px rgba(0,0,0,0.05)',
+            zIndex: 100,
+          }}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            style={{ display: 'none' }}
+            onChange={() => { /* handle file upload */ }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              display: 'inline-flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              padding: '4px 15px',
+              borderRadius: 4,
+              backgroundColor: '#2A6DE7',
+              color: '#FFFFFF',
+              border: 'none',
+              fontSize: 14,
+              fontFamily: "'PingFang SC', sans-serif",
+              fontWeight: 400,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >上传资料</button>
+        </div>
+      )}
+
+      {/* ── 创建人 + 退回修改 Action Bar ── */}
+      {docStatus === '退回修改' && docSource === 'created' && pdfColumnCenterX !== null && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 36,
+            left: pdfColumnCenterX,
+            transform: 'translateX(-50%)',
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            padding: 8,
+            backgroundColor: '#FAFAFA',
+            border: '1px solid #F0F0F0',
+            borderRadius: 8,
+            boxShadow: '1px 2px 4px 0px rgba(0,0,0,0.08), 0px 3px 8px 0px rgba(0,0,0,0.05)',
+            zIndex: 100,
+          }}
+        >
+          <input
+            type="file"
+            style={{ display: 'none' }}
+            ref={fileInputRef}
+            onChange={() => { /* handle file upload */ }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              display: 'inline-flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              padding: '4px 15px',
+              borderRadius: 4,
+              backgroundColor: '#2A6DE7',
+              color: '#FFFFFF',
+              border: 'none',
+              fontSize: 14,
+              fontFamily: "'PingFang SC', sans-serif",
+              fontWeight: 400,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >重新上传</button>
+        </div>
+      )}
+
+      {/* ── 创建人 + AI审核失败 Action Bar ── */}
+      {isAIReviewFailed && docSource === 'created' && pdfColumnCenterX !== null && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 36,
+            left: pdfColumnCenterX,
+            transform: 'translateX(-50%)',
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            padding: 8,
+            backgroundColor: '#FAFAFA',
+            border: '1px solid #F0F0F0',
+            borderRadius: 8,
+            boxShadow: '1px 2px 4px 0px rgba(0,0,0,0.08), 0px 3px 8px 0px rgba(0,0,0,0.05)',
+            zIndex: 100,
+          }}
+        >
+          {/* 重新上传 button: brand blue-60 filled */}
+          <input
+            type="file"
+            style={{ display: 'none' }}
+            ref={fileInputRef}
+            onChange={() => { /* handle file upload */ }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              display: 'inline-flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              padding: '4px 15px',
+              borderRadius: 4,
+              backgroundColor: '#2A6DE7',
+              color: '#FFFFFF',
+              border: 'none',
+              fontSize: 14,
+              fontFamily: "'PingFang SC', sans-serif",
+              fontWeight: 400,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >重新上传</button>
+          {/* 删除资料 button: white bg, grey border */}
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            style={{
+              display: 'inline-flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              padding: '4px 15px',
+              borderRadius: 4,
+              backgroundColor: '#FFFFFF',
+              color: '#333333',
+              border: '1px solid #CCCCCC',
+              fontSize: 14,
+              fontFamily: "'PingFang SC', sans-serif",
+              fontWeight: 400,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >删除资料</button>
+        </div>
+      )}
+
+      {/* ── 人工审核 Action Bar (fixed anchor, centered with PDF column) ── */}
+      {docStatus === '人工审核中' && !isReadOnly && !reviewResult && pdfColumnCenterX !== null && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 36,
+            left: pdfColumnCenterX,
+            transform: 'translateX(-50%)',
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            padding: 8,
+            backgroundColor: '#FAFAFA',
+            border: '1px solid #F0F0F0',
+            borderRadius: 8,
+            boxShadow: '1px 2px 4px 0px rgba(0,0,0,0.08), 0px 3px 8px 0px rgba(0,0,0,0.05)',
+            zIndex: 100,
+          }}
+        >
+          {(['审核通过', '返回修改', '待补充', '无需审核'] as const).map((action) => {
+            const isPrimary = action === '审核通过'
+            const isDanger = action === '返回修改'
+            return (
+              <button
+                key={action}
+                onClick={() => setPendingReviewAction(action)}
+                style={{
+                  display: 'inline-flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  padding: '4px 15px',
+                  borderRadius: 4,
+                  backgroundColor: isPrimary ? '#2A6DE7' : '#FFFFFF',
+                  color: isPrimary ? '#FFFFFF' : isDanger ? '#FA4D56' : '#333333',
+                  border: isPrimary ? 'none' : isDanger ? '1px solid #FFD7D9' : '1px solid #CCCCCC',
+                  fontSize: 14,
+                  fontFamily: "'PingFang SC', sans-serif",
+                  fontWeight: 400,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >{action}</button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ── 审核确认弹窗 ── */}
+      <Modal
+        visible={!!pendingReviewAction}
+        onClose={() => setPendingReviewAction(null)}
+        title={pendingReviewAction || ''}
+        description={`是否确认资料DOC-2026-0518-001${pendingReviewAction || ''}？`}
+        actions={[
+          { label: '取消', variant: 'default', onClick: () => setPendingReviewAction(null) },
+          { label: '确认', variant: 'primary', onClick: handleConfirmReview },
+        ]}
+      />
+
+      {/* ── 提交审核 Modal (选择待审核人) ── */}
+      <Modal
+        variant="form"
+        visible={showSubmitModal}
+        onClose={() => { setShowSubmitModal(false); setOpenDropdown(null) }}
+        title="选择待审核人"
+        subtitle="请选择各部门的审核人，至少选择一个部门，每个部门只能选择一人。"
+        actions={[
+          { label: '取消', variant: 'default', onClick: () => { setShowSubmitModal(false); setOpenDropdown(null) } },
+          {
+            label: '确认提交', variant: 'primary',
+            disabled: !Object.values(reviewerSelections).some(v => v),
+            onClick: () => {
+              if (!Object.values(reviewerSelections).some(v => v)) return
+              setShowSubmitModal(false)
+              setOpenDropdown(null)
+            },
+          },
+        ]}
+      >
+        {departments.map(dept => (
+          <div key={dept} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{
+              fontSize: 14, color: '#000000',
+              fontFamily: "'PingFang SC', sans-serif", fontWeight: 400,
+            }}>{dept}</span>
+            <div
+              onClick={() => setOpenDropdown(openDropdown === dept ? null : dept)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '8px', border: '1px solid #E5E5E5', borderRadius: 8,
+                cursor: 'pointer', position: 'relative',
+              }}
+            >
+              <span style={{
+                fontSize: 14,
+                color: reviewerSelections[dept] ? '#333333' : '#BFBFBF',
+                fontFamily: "'PingFang SC', sans-serif", fontWeight: 400,
+              }}>{reviewerSelections[dept] || '请选择审核人'}</span>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M8 11.2L3.6 6.8L4.53333 5.86667L8 9.33333L11.4667 5.86667L12.4 6.8L8 11.2Z" fill="#333333"/>
+              </svg>
+              {openDropdown === dept && (
+                <div style={{
+                  position: 'absolute', top: '100%', left: -1, right: -1,
+                  backgroundColor: '#FFFFFF', border: '1px solid #E5E5E5',
+                  borderRadius: 8, boxShadow: '0px 4px 12px rgba(0,0,0,0.1)',
+                  zIndex: 10, marginTop: 4,
+                }}>
+                  {mockReviewers.map(name => (
+                    <div
+                      key={name}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setReviewerSelections(prev => ({ ...prev, [dept]: name }))
+                        setOpenDropdown(null)
+                      }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.backgroundColor = '#F5F5F5' }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.backgroundColor = reviewerSelections[dept] === name ? '#F0F5FF' : '#FFFFFF' }}
+                      style={{
+                        padding: '8px 12px', fontSize: 14, color: '#333333',
+                        fontFamily: "'PingFang SC', sans-serif", cursor: 'pointer',
+                        backgroundColor: reviewerSelections[dept] === name ? '#F0F5FF' : '#FFFFFF',
+                      }}
+                    >{name}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </Modal>
+
+      {/* ── 删除资料确认弹窗 ── */}
+      <Modal
+        visible={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        title="删除资料"
+        description="是否确认删除资料DOC-2026-0518-001？"
+        actions={[
+          { label: '取消', variant: 'default', onClick: () => setShowDeleteConfirm(false) },
+          {
+            label: '确认', variant: 'primary',
+            onClick: () => { setShowDeleteConfirm(false); navigate('/workbench') },
+          },
+        ]}
+      />
 
       {/* ── AI审核中 Overlay (不遮挡 TopBar，保留返回按钮可点击) ── */}
       {isAIReviewing && (
